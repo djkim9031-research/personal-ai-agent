@@ -29,3 +29,19 @@ The workstation's global git settings carry another identity, commit template an
 Decisions: commits are authored as `djkim9031-research`, and this repository uses only that account's credentials. The ignore list is as proposed, and the license is MIT.
 
 Rejected: blocking force pushes on GitHub. Removing a leaked secret needs a history rewrite, and that needs a force push.
+
+Check, 2026-10-15: `scripts/hygiene/selftest.sh` passed 16 of 16 attempts in a throwaway clone pushing to a local bare repository:
+
+| Attempt | Result |
+|---|---|
+| Push of the existing history | accepted |
+| Three deny-list samples, each in a commit message and in a file | refused by `commit-msg` and `pre-commit` |
+| A random fake GitHub token in a file | refused by gitleaks, rule `github-pat` |
+| A 6 MB file | refused by `pre-commit` |
+| A file under `data/`, forced past the ignore list | refused by `pre-commit` |
+| Another email, committed with `--no-verify` | refused by `pre-push` |
+| A deny-list sample and a fake token, committed with `--no-verify` | refused by `pre-push` |
+| A push of a notes ref | refused by `pre-push` |
+| A clean commit and push | accepted; the remote holds only `HEAD` and `main` |
+
+A missing deny list and a commit under another email are both refused as well.

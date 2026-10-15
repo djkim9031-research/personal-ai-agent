@@ -10,7 +10,7 @@ fail() { note "$*"; exit 1; }
 # Blank lines and lines starting with # are skipped. Lines starting with
 # "sample: " are strings for the self-test, not patterns.
 load_deny() {
-    [ -r "$HYGIENE_DENY_FILE" ] || fail "deny list missing: $HYGIENE_DENY_FILE"
+    [ -f "$HYGIENE_DENY_FILE" ] && [ -r "$HYGIENE_DENY_FILE" ] || fail "deny list missing: $HYGIENE_DENY_FILE"
     DENY=$(grep -Ev '^[[:space:]]*(#|$)|^sample: ' "$HYGIENE_DENY_FILE" || true)
     [ -n "$DENY" ] || fail "deny list has no patterns: $HYGIENE_DENY_FILE"
 }
