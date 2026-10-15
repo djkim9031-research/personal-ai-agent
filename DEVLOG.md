@@ -45,3 +45,7 @@ Check, 2026-10-15: `scripts/hygiene/selftest.sh` passed 16 of 16 attempts in a t
 | A clean commit and push | accepted; the remote holds only `HEAD` and `main` |
 
 A missing deny list and a commit under another email are both refused as well.
+
+Published, 2026-10-15: GitHub had secret scanning and push protection on by default. The audit passed with two commits and only `main` on GitHub, and both commits are linked to `djkim9031-research`.
+
+Close, 2026-10-15: the checks on this machine can be skipped with `--no-verify`. GitHub's push protection still refuses known key formats, but a work name would only be caught by the audit after it is already public. So `--no-verify` is never used in this repository.
