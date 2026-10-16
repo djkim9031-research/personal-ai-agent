@@ -61,7 +61,7 @@ Decisions:
 - Thinking effort stays at the model's default, `xhigh`. Requests can ask for `medium` or `low`.
 - The KV cache is 16-bit, not FP8 as first planned. The checkpoint ships no calibrated FP8 cache scales, so FP8 would use a default scale of 1.0. FP8 is an option to test later, not the default.
 - The sleep and wake endpoints stay off until increment 5. The switch that adds them also exposes an unauthenticated control endpoint.
-- The service restarts on any exit, because vLLM exits with status 0 when its engine dies. It gives up after 3 failed starts in 30 minutes, and it is not enabled at boot.
+- The service restarts on any exit, because vLLM exits with status 0 when its engine dies. A 6th start within 30 minutes is refused, so a crash loop cannot hold the GPU for long, and the service is not enabled at boot.
 
 Found while building: the GPU kernels compiled on first start need `ninja` and `nvcc`. The start script now takes both from the environment and the CUDA toolkit instead of the caller's PATH. The publisher's CRC32 list predates three re-uploaded text files, so `download-model.sh` checks only the 66 weight files.
 

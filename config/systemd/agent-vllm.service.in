@@ -3,9 +3,10 @@
 [Unit]
 Description=Local model server for the personal agent (vLLM)
 After=network.target
-# Give up after 3 failed starts in 30 minutes instead of holding the GPU in a loop.
+# A 6th start within 30 minutes is refused, so a crash loop cannot hold the
+# GPU for long. Manual starts count too; clear with systemctl reset-failed.
 StartLimitIntervalSec=30min
-StartLimitBurst=3
+StartLimitBurst=5
 
 [Service]
 Type=exec
