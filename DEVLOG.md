@@ -49,3 +49,35 @@ A missing deny list and a commit under another email are both refused as well.
 Published, 2026-10-15: GitHub had secret scanning and push protection on by default. The audit passed with two commits and only `main` on GitHub, and both commits are linked to `djkim9031-research`.
 
 Close, 2026-10-15: the checks on this machine can be skipped with `--no-verify`. GitHub's push protection still refuses known key formats, but a work name would only be caught by the audit after it is already public. So `--no-verify` is never used in this repository.
+
+## Increment 3: serving the local model
+
+Dates: 2026-10-15.
+
+Brief: vLLM serves Qwen3.8-27B in FP8 on 127.0.0.1:8000 under the name `local-primary`, with a 131,072-token context, up to 4 requests at a time, MTP guessing 3 tokens ahead, and the qwen3 thinking and qwen3_coder tool parsers. It runs as a systemd service under its own unprivileged user, `agent-serve`. To that service, `/home` is empty except its own home, which it can write, and the runtime, the model and `config/vllm`, which it can only read. Every version is pinned: vLLM 0.31.0 from PyPI, built for CUDA 13.0, plus a 199-package lock, Python 3.12.13, and model revision `017b9c7a`.
+
+Decisions:
+
+- Thinking effort stays at the model's default, `xhigh`. Requests can ask for `medium` or `low`.
+- The KV cache is 16-bit, not FP8 as first planned. The checkpoint ships no calibrated FP8 cache scales, so FP8 would use a default scale of 1.0. FP8 is an option to test later, not the default.
+- The sleep and wake endpoints stay off until increment 5. The switch that adds them also exposes an unauthenticated control endpoint.
+- The service restarts on any exit, because vLLM exits with status 0 when its engine dies. It gives up after 3 failed starts in 30 minutes, and it is not enabled at boot.
+
+Found while building: the GPU kernels compiled on first start need `ninja` and `nvcc`. The start script now takes both from the environment and the CUDA toolkit instead of the caller's PATH. The publisher's CRC32 list predates three re-uploaded text files, so `download-model.sh` checks only the 66 weight files.
+
+Check, before the service: `scripts/serve/verify.py` passed 13 of 13 in four setups:
+
+- a plain run;
+- a clean environment with an empty home;
+- a sandbox where `/home` held only the three bound folders;
+- the same sandbox with no network.
+
+| Measure | Result |
+|---|---|
+| Weights in GPU memory | 29.0 GiB |
+| KV cache pool | 357,335 tokens, 2.7 full-length requests at once |
+| Cold start | 190 s; 139 s with warm caches |
+| Speed, 3,520 tokens at `xhigh` | 95 tokens/s, of which 3,211 tokens were thinking |
+| MTP acceptance | 82% |
+
+Network calls made by the server: none.
