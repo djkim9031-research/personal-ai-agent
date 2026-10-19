@@ -24,6 +24,8 @@ if ! id agent-serve >/dev/null 2>&1; then
 fi
 install -d -o agent-serve -g agent-serve -m 0755 "$serve_home"
 install -d -o agent-serve -g agent-serve -m 0750 "$serve_home/.cache" "$serve_home/tmp"
+# vLLM would write a usage report here; pass-through lets verify.py see one.
+install -d -o agent-serve -g agent-serve -m 0711 "$serve_home/.config" "$serve_home/.config/vllm"
 
 # Read-only access, granted by name: pass-through on the parent folders,
 # read on the runtime, the model and the serve scripts. Default entries

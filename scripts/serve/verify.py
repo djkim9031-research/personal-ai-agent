@@ -179,8 +179,15 @@ def main():
     addrs = [line.split()[3] for line in listen if line.strip() and line.split()[3].endswith(f":{cfg['PORT']}")]
     check("listens on 127.0.0.1 only", bool(addrs) and all(a.startswith("127.0.0.1:") for a in addrs), ", ".join(addrs))
     started, _ = metric(text, "process_start_time_seconds")
-    stats = [p for p in (f"{home}/.config/vllm/usage_stats.json", "/home/agent-serve/.config/vllm/usage_stats.json")
-             if os.path.exists(p) and os.path.getmtime(p) >= started]
+    stats = []
+    for p in (f"{home}/.config/vllm/usage_stats.json", "/home/agent-serve/.config/vllm/usage_stats.json"):
+        try:
+            if os.stat(p).st_mtime >= started:
+                stats.append(p)
+        except FileNotFoundError:
+            pass
+        except PermissionError:
+            stats.append(f"cannot look into {os.path.dirname(p)}")
     check("no usage report written since the server started", bool(started) and not stats, ", ".join(stats))
     return finish()
 

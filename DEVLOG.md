@@ -81,3 +81,9 @@ Check, before the service: `scripts/serve/verify.py` passed 13 of 13 in four set
 | MTP acceptance | 82% |
 
 Network calls made by the server: none.
+
+Check as a service, 2026-10-19: `sudo scripts/serve/setup-service.sh`, then `sudo systemctl start agent-vllm`. The first start took 251 s: 26 s loading the weights, 42 s compiling, 66 s capturing CUDA graphs, 54 s building a FlashInfer kernel once, and the rest starting up. The server holds 56,644 MiB of GPU memory, and `verify.py` passed 13 of 13 in 2.3 s.
+
+Fixed on the way: under the service, check 13 could not see a usage report, because files the service creates are private to it, so the check would have passed without looking. `setup-service.sh` now creates the folder vLLM writes that report to with pass-through permission, and `verify.py` fails when it cannot look.
+
+Close, 2026-10-19: other machines cannot connect. Only 127.0.0.1 accepts connections, and requests to this machine's network addresses are refused. Web pages are the remaining path. The server answers every cross-origin request with `Access-Control-Allow-Origin: *` and accepts any `Host` name. Measured with Chrome 153, a page served from this machine, from another port or as a file, can ask the model questions and read the answers. The same page marked as coming from the internet is blocked by Chrome before anything is sent. Other browsers were not tested. Accepted as low risk. Before increment 5 turns on the sleep and wake routes, the server must stop sending that header and refuse other `Host` names.
