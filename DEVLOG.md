@@ -123,3 +123,5 @@ Check, 2026-10-19, 49 minutes, tables in `docs/measurements.md`:
 | Network | no download line in six server logs; verify 13 of 13 |
 
 The two items from the increment 3 fact-check are settled: downloads are forbidden and verified off, and MTP with cache reuse produced identical answers.
+
+Close, 2026-10-19: closed with the decisions above standing. These tables are the baseline every later change to the server is compared against, starting with the browser protections and the sleep and wake routes of increment 5.
