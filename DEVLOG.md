@@ -87,3 +87,39 @@ Check as a service, 2026-10-19: `sudo scripts/serve/setup-service.sh`, then `sud
 Fixed on the way: under the service, check 13 could not see a usage report, because files the service creates are private to it, so the check would have passed without looking. `setup-service.sh` now creates the folder vLLM writes that report to with pass-through permission, and `verify.py` fails when it cannot look.
 
 Close, 2026-10-19: other machines cannot connect. Only 127.0.0.1 accepts connections, and requests to this machine's network addresses are refused. Web pages are the remaining path. The server answers every cross-origin request with `Access-Control-Allow-Origin: *` and accepts any `Host` name. Measured with Chrome 153, a page served from this machine, from another port or as a file, can ask the model questions and read the answers. The same page marked as coming from the internet is blocked by Chrome before anything is sent. Other browsers were not tested. Accepted as low risk. Before increment 5 turns on the sleep and wake routes, the server must stop sending that header and refuse other `Host` names.
+
+## Increment 4: measurement
+
+Dates: 2026-10-19.
+
+Brief: from here on, every change to the server is judged by numbers taken the same way each time. The numbers are time to first token (how long the model reads before it starts writing), tokens per second while writing, the total across requests running at once, the share of MTP guesses accepted, answer correctness on a fixed set, and GPU power in each state. They are taken in turns, A, B, A, B, A, B, with the same prompts, so a drift of the GPU over the run lands on both sides. A change is kept only if its answers are at least as good and it is not slower.
+
+Decisions:
+
+- All numbers go into the public `docs/measurements.md`: public model, public software, prompts from public code, a GPU anyone can buy. The raw records, which carry answers and paths, stay on this machine.
+- `FLASHINFER_NO_DOWNLOAD=1` is set in `serve.sh`, so FlashInfer can never fetch a kernel from NVIDIA. The kernels this model needs are built locally on first start.
+- MTP stays on: 1.8x to 2.2x faster writing in all three on/off pairs, no loss on the quality set, same time to first token.
+- The effort default stays `xhigh`; the quality set is too short to separate the levels, and effort per agent role is decided later on real tasks.
+
+Rejected: vLLM's own `vllm bench serve`. Its chat client counts only answer text, so with a thinking model it reports the first answer token, after all the thinking, as the first token.
+
+Build: `scripts/measure/make-prompts.py` (prompts of 1K, 8K and 64K tokens from vLLM's Apache-2.0 source files, and the quality set with fixed seeds), `bench.py` (the client: streams, counts thinking and answer tokens, reads the MTP and cache counters before and after), `grade.py` (exact answers by text, code by hidden tests in a bubblewrap sandbox), `run.sh` (the protocol: six servers in turns, power sampling, resumable), `report.py` (the tables), `quality.jsonl` (24 items), `MEASURE_SPECULATIVE_CONFIG=off` in `serve.sh`.
+
+Check, 2026-10-19, 49 minutes, tables in `docs/measurements.md`:
+
+| Measure | Result |
+|---|---|
+| Writing speed, one request, 1K input | 79 tokens/s with MTP, 39 without |
+| Writing speed, one request, 8K input | 70 with MTP, 38 without |
+| Four requests at once, 1K input | 239 tokens/s total with MTP, 122 without |
+| Time to first token | 0.24 s at 1K, 1.6 s at 8K, 17 s at 64K |
+| 64K input, four at once | first token after 36 s, 10 tokens/s each |
+| MTP guesses accepted | 61-73% |
+| Quality set, MTP on / off | 23 / 22 of 24 in each of three pairs |
+| Effort low / medium / xhigh | 23 / 23 / 23 of 24; 93 / 116 / 86 thinking tokens per item |
+| Cache reuse, 6,030-token prefix | first token 0.30 s instead of 1.17 s; answers byte-identical, 24 of 24, in all four passes |
+| GPU power | 18 W stopped, 35 W loaded and idle, 276-299 W working |
+| Start to ready | 50 s warm, 90 s with a new configuration to compile |
+| Network | no download line in six server logs; verify 13 of 13 |
+
+The two items from the increment 3 fact-check are settled: downloads are forbidden and verified off, and MTP with cache reuse produced identical answers.

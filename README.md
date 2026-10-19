@@ -40,6 +40,10 @@ Then:
 
 The service is not enabled at boot. It holds about 58 GB of GPU memory while it runs, so stop it before other GPU jobs.
 
+## Measuring the server
+
+`scripts/measure/run.sh` measures speed, answer quality, cache reuse and GPU power with the service stopped, MTP on and off in turns, and writes everything under `~/agent-data/measure/results/<date>`. `scripts/measure/report.py` turns a results folder into the tables in `docs/measurements.md`. The prompts come from public code and from `scripts/measure/quality.jsonl`, 24 short tasks a script can grade.
+
 ## License
 
 MIT, see `LICENSE`.

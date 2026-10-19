@@ -18,6 +18,17 @@ model=${AGENT_MODEL:-$HOME/agent-data/hf/${MODEL_REPO#*/}}
 # --enable-sleep-mode alone only selects the memory allocator sleep needs.
 export VLLM_NO_USAGE_STATS=1 DO_NOT_TRACK=1 HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1
 
+# FlashInfer may fetch prebuilt kernels from NVIDIA when one is missing.
+# Forbidden here, so a start never depends on the network; the kernels this
+# model needs are built locally on first start.
+export FLASHINFER_NO_DOWNLOAD=1
+
+# Measurement runs (scripts/measure/run.sh) switch MTP off with
+# MEASURE_SPECULATIVE_CONFIG=off. The service never sets it.
+spec=${MEASURE_SPECULATIVE_CONFIG:-$SPECULATIVE_CONFIG}
+spec_args=(--speculative-config "$spec")
+[ "$spec" != off ] || spec_args=()
+
 # GPU kernels are compiled on first use: ninja comes from the environment
 # and nvcc from the CUDA toolkit, so neither depends on the caller's PATH.
 export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
@@ -29,7 +40,7 @@ exec "$venv/bin/vllm" serve "$model" \
     --max-model-len "$MAX_MODEL_LEN" --max-num-seqs "$MAX_NUM_SEQS" \
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" --kv-cache-dtype "$KV_CACHE_DTYPE" \
     --enable-prefix-caching \
-    --speculative-config "$SPECULATIVE_CONFIG" \
+    "${spec_args[@]}" \
     --reasoning-parser "$REASONING_PARSER" \
     --enable-auto-tool-choice --tool-call-parser "$TOOL_CALL_PARSER" \
     --limit-mm-per-prompt "$LIMIT_MM_PER_PROMPT" \
