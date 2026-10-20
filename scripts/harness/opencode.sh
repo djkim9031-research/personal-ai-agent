@@ -15,6 +15,7 @@ if [ ! -x "$bin" ]; then
     exit 1
 fi
 export OPENCODE_CONFIG="${OPENCODE_CONFIG:-$repo/config/opencode/opencode.json}"
+export AGENT_REPO="$repo"   # the settings name config/opencode/AGENTS.md through it
 export OPENCODE_DISABLE_MODELS_FETCH=true
 export OPENCODE_DISABLE_AUTOUPDATE=true
 export OPENCODE_DISABLE_LSP_DOWNLOAD=true

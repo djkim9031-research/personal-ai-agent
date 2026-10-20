@@ -112,3 +112,15 @@ What it says:
 - **Tool requests parse.** 107 tool requests over the two runs and 60 replayed answers, none malformed, with both of the server's parsers, and the twenty steps left the project in the asked-for state both times. The 15 replayed answers that chose different tools (an edit split in three, a read before an edit) are sampling, not parsing: the server does not draw the same random numbers for the same request twice unless the request carries its own seed. A later server change is judged on the parsed count, which must stay at 60 of 60, and on the same-tools count staying near 45.
 - **The fixed part is small.** 7,256 tokens of the 131,072-token window, read once per session start and then served from the cache: the median first token over the session was 0.36 s.
 - **The session grows.** By step 20 one request carried 25,850 tokens; opencode starts a summarization turn when a request would reach the window minus the answer budget (99,072 tokens with these settings), which these twenty steps did not approach.
+
+### 2026-10-20: a broad question in a 147,709-file monorepo, plan agent
+
+| Measure | Result |
+|---|---|
+| Question | "analyze this codebase and understand the logic", in the window, plan agent |
+| Work | 4 explore subagents in parallel, 158 tool calls, all read-only; 2 permission prompts for paths outside the worktree |
+| Time and tokens | 14 min; 68 requests; 2,630,000 prompt tokens, largest request 79,755; 29,600 generated, of which 22,700 thinking |
+| Answer checked claim by claim | 28 claims: 13 correct, 14 partly wrong, 1 wrong |
+| Causes of the 15 flawed claims | 3 estimated counts, 6 paraphrased or inferred names and descriptions, 4 documented rules not checked against the code, 2 mechanisms described wrongly |
+
+The error rate of factual answers is measured from here on with `scripts/harness/repo-facts.py`, with and without the working rules; the first baseline is still to be run.

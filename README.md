@@ -11,8 +11,9 @@ It is built one increment at a time. `DEVLOG.md` records what each increment bui
 - `config/vllm/`: the model server's pinned settings, package lock and start script
 - `config/systemd/`: the service definition template
 - `scripts/serve/`: install, download, service setup, check and ask scripts for the model server
-- `config/opencode/`: the coding harness's pinned release and its settings
-- `scripts/harness/`: install and start scripts for the harness, the recording proxy, the twenty-step test, its scorer and the replay
+- `config/opencode/`: the coding harness's pinned release, its settings, the working rules every session reads and the subagent prompts
+- `scripts/harness/`: install and start scripts for the harness, the recording proxy, the twenty-step test, its scorer, the replay and the repo-facts test
+- `skills/`: templates for skill folders; filled-in copies live outside the repository
 - `docs/decisions/`: decision records
 
 ## What is never here
@@ -61,11 +62,15 @@ Then, with the model server running, inside a git worktree made for the task:
 
 `~/.local/bin/opencode` is `scripts/harness/opencode.sh`, which starts the pinned release with `config/opencode/opencode.json` and the switches that keep it on this machine: the model is the local server, sharing and the update check are off, the model catalogue and language servers are not downloaded, web fetch and web search are denied, and the skills of other tools in the home folder are ignored. The agent never commits; review the diff and commit yourself.
 
+Every session also reads `config/opencode/AGENTS.md`, the working rules: numbers only from commands, names only with their source, guesses marked as inferred, one question per subagent, a verify pass before a factual answer. The built-in explore subagent runs on `config/opencode/prompts/explore.md` with a cap of 30 steps; the `verify` subagent (`prompts/verify.md`) tries to refute a list of claims against the repository, and `/verify` in the window hands it the claims of the last answer. `skills/repo-facts/` is a template for a fact sheet the model reads instead of guessing; fill it in outside the repository.
+
 Checks:
 
     scripts/harness/egress-check.sh DIR     # one task inside a network namespace that can only reach the model server
     scripts/harness/run-session.py --out OUT [--stream off]   # the twenty-step test on a scratch project, recorded
     scripts/harness/replay.py OUT/recording # sends the recorded requests again and compares the tool calls
+    scripts/harness/repo-facts.py --questions scripts/harness/repo-facts.example.jsonl --project DIR --out OUT --ab
+                                            # factual questions, each in a fresh session, scored; --ab also runs the settings without the rules
 
 ## License
 

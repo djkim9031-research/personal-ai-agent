@@ -197,4 +197,16 @@ Check: `scripts/harness/run-session.py` builds a small Python project with one f
 | Tokens over the streamed session | 997,622 prompt tokens, largest request 25,850; 13,371 generated, of which 6,806 thinking; median first token 0.36 s |
 | One task inside a network namespace with no route out | done in 4 s, 1 tool call, no connection failure in the debug log |
 
-Still open: the edit, build and test cycle in a monorepo worktree, run by hand.
+### Closing piece: grounding and verification (2026-10-20)
+
+The reading half of the monorepo check ran first. In a worktree of a 147,709-file Bazel C++/Python monorepo, the plan agent was asked to analyze the codebase and explain its logic. It split the work into four parallel explore subagents on its own, made 158 tool calls, all read-only, asked twice before reading outside the worktree, and answered after 14 minutes and 2.6 million prompt tokens. Every factual claim in the answer was then checked against the repository: of 28 claims, 13 were correct, 14 partly wrong and 1 wrong. The flawed claims had four causes: counts estimated from partial listings instead of computed (3); acronym expansions and product descriptions paraphrased, or inferred from folder names where no document existed (6); rules repeated from documents without checking the code (4); and mechanisms described wrongly (2). The main agent had merged the subagent reports without checking them. The answer also described the structure of the repository, not its runtime logic, which was the question.
+
+Built against those causes, all under `config/opencode/`:
+
+- `AGENTS.md`: working rules for every session and every subagent: numbers only from commands, names and expansions only with their source, guesses marked as inferred, documented rules checked against the code, one question per subagent with a fixed evidence table, a verify pass before a factual answer, never commit. The settings file names it through `AGENT_REPO`, which the launcher exports, so no copy outside the repository is needed.
+- `prompts/explore.md`: the built-in explore subagent answers one question with an evidence table and stops at 30 steps; the general subagent stops at 40.
+- `prompts/verify.md` and the `verify` agent: a read-only subagent that tries to refute each claim and returns verdicts with evidence. `/verify` in the window hands it the claims of the last answer.
+- `skills/repo-facts/`: a template for a fact sheet with evidence on every line, filled in outside the repository for a private codebase. The local copy for the monorepo holds the facts verified above.
+- `scripts/harness/repo-facts.py`: the test. Each question runs in a fresh headless session through the recording proxy; the `ANSWER:` line is scored, as a number within a tolerance, as required strings, or as a pattern. `--ab` runs the settings with and without the new pieces in turns. `repo-facts.example.jsonl` asks about the scratch project; the private question file asks 33 questions about the monorepo with the answers verified above.
+
+Check, once the GPU is free again (the service is stopped for other work): `repo-facts.py --ab --rounds 2` on the private questions gives the error rate with and without the rules, and the four-subagent question is asked again in the window and its answer checked the same way. Still open: those baseline numbers, and the edit, build and test cycle in the monorepo worktree.

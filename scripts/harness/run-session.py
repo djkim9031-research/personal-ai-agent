@@ -45,6 +45,19 @@ def py(code, cwd):
     return out if rc == 0 else None
 
 
+def resolve_file_refs(obj, base):
+    """Makes {file:relative} references in the settings absolute."""
+    if isinstance(obj, dict):
+        return {k: resolve_file_refs(v, base) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [resolve_file_refs(v, base) for v in obj]
+    if isinstance(obj, str) and obj.startswith("{file:") and obj.endswith("}"):
+        ref = obj[6:-1]
+        if not os.path.isabs(ref) and not ref.startswith("~"):
+            return "{file:" + os.path.join(base, ref) + "}"
+    return obj
+
+
 def check_project(project):
     """What the twenty steps should have left behind."""
     checks = {}
@@ -107,8 +120,10 @@ def main():
             shutil.copytree(src, os.path.join(test_cfg_dir, name), symlinks=True)
         elif os.path.isfile(src):
             shutil.copy(src, test_cfg_dir)
-    # The repository's settings, with the model server replaced by the proxy.
-    cfg = json.load(open(os.path.join(REPO, "config/opencode/opencode.json")))
+    # The repository's settings, with the model server replaced by the proxy and the
+    # prompt files named with absolute paths, since the copy lives elsewhere.
+    cfg_src = os.path.join(REPO, "config/opencode/opencode.json")
+    cfg = resolve_file_refs(json.load(open(cfg_src)), os.path.dirname(cfg_src))
     for prov in cfg.get("provider", {}).values():
         prov.setdefault("options", {})["baseURL"] = f"http://127.0.0.1:{a.proxy_port}/v1"
     cfg_path = os.path.join(out, "opencode.json")

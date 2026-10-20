@@ -33,5 +33,34 @@
     "paths": [
       "~/agent-data/work/skills"
     ]
+  },
+  "instructions": [
+    "{env:AGENT_REPO}/config/opencode/AGENTS.md"
+  ],
+  "agent": {
+    "explore": {
+      "prompt": "{file:prompts/explore.md}",
+      "steps": 30
+    },
+    "general": {
+      "steps": 40
+    },
+    "verify": {
+      "description": "Checks a list of factual claims about the code against the repository, read-only, and returns verdicts with evidence. Use it on a draft before giving a factual answer to the user.",
+      "mode": "subagent",
+      "prompt": "{file:prompts/verify.md}",
+      "steps": 40,
+      "permission": {
+        "edit": "deny",
+        "task": "deny",
+        "todowrite": "deny"
+      }
+    }
+  },
+  "command": {
+    "verify": {
+      "description": "check the factual claims of the last answer against the repository",
+      "template": "Verify your last answer. 1. List every factual claim in it as numbered lines: counts, names, acronym expansions, descriptions of components, mechanisms, file paths. 2. Call the verify subagent with the task tool (subagent_type \"verify\") and give it the numbered list and the project directory; ask it for the verdict table. 3. Show its table, then give the corrected answer with every corrected claim marked. $ARGUMENTS"
+    }
   }
 }
