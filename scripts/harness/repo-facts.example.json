@@ -1,0 +1,8 @@
+[
+  {"id": "functions", "question": "How many functions are defined at the top level of textstats/count.py?", "type": "number", "answer": 3},
+  {"id": "test-count", "question": "How many test methods are defined in tests/test_count.py?", "type": "number", "answer": 4},
+  {"id": "failing-test", "question": "Run the tests. Which test method fails, and which function does it test?", "type": "contains", "answer": ["test_unique_words_ignores_case", "unique_words"]},
+  {"id": "spaces-default", "question": "What is the default value of the spaces parameter of char_count in textstats/count.py?", "type": "regex", "answer": "^true\\b"},
+  {"id": "cli-output", "question": "Which three quantities does textstats/cli.py print? Name them.", "type": "contains", "answer": ["words", "characters", "unique"]},
+  {"id": "readme-json", "question": "Does README.md mention a --json flag? Answer yes or no.", "type": "regex", "answer": "^no\\b"}
+]

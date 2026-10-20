@@ -9,7 +9,7 @@ files can be given; they run in turns, round after round, for an alternating com
 and --ab adds a baseline made from the first settings file without its instructions,
 agents and commands. Standard library only.
 
-Usage: repo-facts.py --questions FILE.jsonl --project DIR --out DIR [--config FILE]... [--ab]
+Usage: repo-facts.py --questions FILE.json|FILE.jsonl --project DIR --out DIR [--config FILE]... [--ab]
          [--rounds 1] [--agent plan] [--limit N] [--ids a,b] [--base http://127.0.0.1:8000]
          [--proxy-port 8011] [--timeout 900] [--dry-run] [--selftest]
 Question line: {"id": "q1", "question": "...", "type": "number", "answer": 3, "tolerance": 0}
@@ -38,6 +38,9 @@ LEVERS = ("instructions", "agent", "command")
 
 
 def load_questions(path):
+    """A .json list, or one object per line (.jsonl) with # comment lines."""
+    if path.endswith(".json"):
+        return json.load(open(path))
     out = []
     for line in open(path):
         line = line.strip()
