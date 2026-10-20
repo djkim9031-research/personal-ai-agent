@@ -125,3 +125,35 @@ Check, 2026-10-19, 49 minutes, tables in `docs/measurements.md`:
 The two items from the increment 3 fact-check are settled: downloads are forbidden and verified off, and MTP with cache reuse produced identical answers.
 
 Close, 2026-10-19: closed with the decisions above standing. These tables are the baseline every later change to the server is compared against, starting with the browser protections and the sleep and wake routes of increment 5.
+
+## Increment 5: GPU yield, deferred
+
+Dates: 2026-10-19.
+
+Brief: the plan had the model server give the GPU back to other jobs by itself. A wrapper around each GPU job would put the server to sleep, run the job, then wake the server, and a watcher would catch jobs started without the wrapper. In vLLM's level-1 sleep the weights are copied to host RAM and the cache of past conversations is discarded. Level 2 drops the weights too and is never used: wake does not load them again, and MTP breaks.
+
+Measured with the sleep and wake routes switched on for the test (`VLLM_SERVER_DEV_MODE=1`, started from a user shell, not as the service):
+
+| Measure | Result |
+|---|---|
+| GPU memory in use with the server loaded, desktop included | 57.8 GB |
+| Freed by a level-1 sleep | 54.5 GiB: 29.2 GiB of weights copied to host RAM, 25.3 GiB of cache discarded; 2.1 GiB stay |
+| First sleep, later sleeps | 19 s, then 0.6 s |
+| Wake | 0.7 s; answers correct and at full speed afterwards |
+| Host RAM kept after the first sleep | 29 GB for the life of the server process |
+| Request sent while asleep | waits, answered after the wake |
+| Request in flight when sleep is called | cut off, finish reason `abort` |
+| Wake while another process holds 60 GB | HTTP 500, out of memory; the server stays asleep, and a retry after that process exits works |
+| Stop and start instead | GPU free 10 s after the stop; answering about 60 s after the start |
+
+The switch that adds the sleep and wake routes adds about twenty other control routes, one of which runs an engine function by name. A page open in a browser on this machine could call them, so they would need the origin, `Host` and token checks named at the close of increment 3.
+
+Decision, 2026-10-19: deferred. One person uses this server. Before a GPU job that person stops the service, and afterwards starts it again:
+
+```
+sudo systemctl stop agent-vllm
+<the job>
+sudo systemctl start agent-vllm
+```
+
+Two rules go with that. Stop with `systemctl`, never with `kill`: the unit restarts a killed server after 30 s, in the middle of the job. The service is not enabled at boot, so after a restart of the machine the GPU is free until the service is started. A forgotten stop costs one failed job start; a forgotten start costs a refused connection until the next start. The control routes stay off, and `--enable-sleep-mode` stays in `serve.sh` because the increment 4 numbers were measured with it. Revisited when an unattended job needs the server back without a restart.

@@ -13,9 +13,10 @@ model=${AGENT_MODEL:-$HOME/agent-data/hf/${MODEL_REPO#*/}}
 [ -f "$model/config.json" ] || { echo "model not found in $model" >&2; exit 1; }
 
 # No usage reports and no Hugging Face calls. The sleep and wake endpoints
-# stay off until the GPU-sharing step needs them: the switch that adds them,
-# VLLM_SERVER_DEV_MODE, also exposes an unauthenticated control endpoint.
-# --enable-sleep-mode alone only selects the memory allocator sleep needs.
+# stay off: the switch that adds them, VLLM_SERVER_DEV_MODE, also exposes an
+# unauthenticated control endpoint, and automatic GPU sharing was deferred
+# (DEVLOG, increment 5). --enable-sleep-mode alone only selects the memory
+# allocator sleep needs; the measurements were taken with it on.
 export VLLM_NO_USAGE_STATS=1 DO_NOT_TRACK=1 HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1
 
 # FlashInfer may fetch prebuilt kernels from NVIDIA when one is missing.
