@@ -91,3 +91,24 @@ verify.py on the first server: 13 passed, 0 failed
 - **The effort setting did not separate on this set.** All three levels scored 23 of 24 and thought about 90-120 tokens per item: these tasks are too short to make the model think longer. On an open question on 2026-10-15 (a 250-word explanation), `xhigh` thought 3,211 tokens before a 309-token answer. The `xhigh` default stays; effort per agent role is decided later on real tasks.
 - **Power.** 18 W with the server stopped, 35 W with the model loaded and idle, 276-299 W while reading or writing (the card's 300 W limit), up to 89 C on the 65,000-token reads.
 - **Starts.** 50 s to ready with warm caches, 90 s the first time a new configuration compiles, 251 s on the service's first ever start (2026-10-19 morning).
+
+## 2026-10-19: coding harness
+
+opencode 1.19.3 against the same server, through `scripts/harness/record-proxy.py`, which records every request and answer. `run-session.py` builds a small Python project with one failing test and sends twenty requests in one session: reading, docstrings, running tests, a bug fix, finding callers, a rename across three files, new functions with tests, a `--json` flag, an error exit, a subprocess test, a cleanup, a summary. `score.py` counts the model's tool requests, malformed ones (text that looks like a tool request but did not parse, or arguments that are not JSON), repeats of the same request within a step, and tool results that start with the word error. The runner checks the project's end state ten ways. With `--stream off` the proxy sends each request to the server without streaming and hands the complete answer back as a short stream, so the server's non-streaming tool parser is the one tested. `replay.py` sends a recording's requests again without streaming and compares the tool requests; it is the gate for later server changes.
+
+| Measure | Result |
+|---|---|
+| Fixed part of every session | 10,002-character system prompt and 9 tool definitions; 7,256 tokens with the first question |
+| First answer of a session, two file reads | first token after 1.3 s, done in 2.9 s |
+| Twenty steps, streaming | 60 requests, 52 tool requests, 0 malformed, 0 repeated, 0 tool errors, 0 refused permissions, 10 of 10 end-state checks, 4.1 min |
+| Twenty steps, non-streaming parser | 61 requests, 55 tool requests, 0 malformed, 0 repeated, 0 tool errors, 0 refused permissions, 10 of 10 end-state checks, 4.1 min |
+| Replay of the streamed recording, 60 requests | 60 of 60 answered and parsed; 45 asked for the same tools as recorded, 59 the same finish reason; 3.6 min |
+| Tokens over the streamed session | 997,622 prompt tokens in 60 requests, largest request 25,850; 13,371 generated, of which 6,806 thinking |
+| First token, streamed session | median 0.36 s, at most 1.33 s |
+| One task in a network namespace with no route out | done in 4 s, 1 tool call, no connection failure in the debug log |
+
+What it says:
+
+- **Tool requests parse.** 107 tool requests over the two runs and 60 replayed answers, none malformed, with both of the server's parsers, and the twenty steps left the project in the asked-for state both times. The 15 replayed answers that chose different tools (an edit split in three, a read before an edit) are sampling, not parsing: the server does not draw the same random numbers for the same request twice unless the request carries its own seed. A later server change is judged on the parsed count, which must stay at 60 of 60, and on the same-tools count staying near 45.
+- **The fixed part is small.** 7,256 tokens of the 131,072-token window, read once per session start and then served from the cache: the median first token over the session was 0.36 s.
+- **The session grows.** By step 20 one request carried 25,850 tokens; opencode starts a summarization turn when a request would reach the window minus the answer budget (99,072 tokens with these settings), which these twenty steps did not approach.

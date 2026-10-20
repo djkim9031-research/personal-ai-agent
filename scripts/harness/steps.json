@@ -1,0 +1,22 @@
+[
+ {"n": 1, "ask": "Read README.md and textstats/count.py, then tell me in two sentences what this project does. Do not change anything.", "expect": ["read"]},
+ {"n": 2, "ask": "Add a one-line docstring to each function in textstats/count.py. Keep the code itself unchanged.", "expect": ["edit"]},
+ {"n": 3, "ask": "Run the tests with `python3 -m unittest -v` and tell me which test fails and why.", "expect": ["bash"]},
+ {"n": 4, "ask": "Fix unique_words in textstats/count.py so that it ignores case, then run the tests again.", "expect": ["edit", "bash"]},
+ {"n": 5, "ask": "Find every place where char_count is used and list the files and line numbers. Do not change anything.", "expect": ["grep"]},
+ {"n": 6, "ask": "Rename the function char_count to character_count everywhere in the project, including the tests and the CLI.", "expect": ["edit"]},
+ {"n": 7, "ask": "Run the tests to confirm the rename did not break anything.", "expect": ["bash"]},
+ {"n": 8, "ask": "Add a function sentence_count(text) to textstats/count.py that counts sentences ending in '.', '!' or '?'. Export it from textstats/__init__.py.", "expect": ["edit"]},
+ {"n": 9, "ask": "Add tests for sentence_count to tests/test_count.py: 'Hi. Bye!' gives 2 and an empty string gives 0. Run the tests.", "expect": ["edit", "bash"]},
+ {"n": 10, "ask": "Add a --json flag to textstats/cli.py that prints the counts as one JSON object with the keys words, characters, unique and sentences, instead of the lines.", "expect": ["edit"]},
+ {"n": 11, "ask": "Create a file sample.txt with three sentences, then run the CLI on it with and without --json and show me the output.", "expect": ["write", "bash"]},
+ {"n": 12, "ask": "Create a new module textstats/stats.py with a function average_word_length(text) that returns the mean length of the words and 0.0 for an empty string. Export it from textstats/__init__.py.", "expect": ["write", "edit"]},
+ {"n": 13, "ask": "Add two tests for average_word_length: 'ab cd' gives 2.0 and '' gives 0.0. Run the tests.", "expect": ["edit", "bash"]},
+ {"n": 14, "ask": "Show me `git diff --stat` and list which files changed since the start of the session.", "expect": ["bash"]},
+ {"n": 15, "ask": "Update README.md so that it documents every function in the package and the --json flag.", "expect": ["edit"]},
+ {"n": 16, "ask": "In textstats/cli.py, print an error message and exit with code 2 when the file does not exist, instead of a traceback. Run the CLI on a missing file to prove it.", "expect": ["edit", "bash"]},
+ {"n": 17, "ask": "Create tests/test_cli.py that runs the CLI through subprocess on sample.txt with --json and checks that the JSON has the keys words, characters, unique and sentences. Run it.", "expect": ["write", "bash"]},
+ {"n": 18, "ask": "Run the whole test suite. If anything fails, fix it and run again.", "expect": ["bash"]},
+ {"n": 19, "ask": "Delete sample.txt and make tests/test_cli.py create its own temporary file instead. Run the tests.", "expect": ["bash", "edit"]},
+ {"n": 20, "ask": "Summarize in five bullet points what changed in this project during this session. Do not change any files.", "expect": []}
+]

@@ -157,3 +157,44 @@ sudo systemctl start agent-vllm
 ```
 
 Two rules go with that. Stop with `systemctl`, never with `kill`: the unit restarts a killed server after 30 s, in the middle of the job. The service is not enabled at boot, so after a restart of the machine the GPU is free until the service is started. A forgotten stop costs one failed job start; a forgotten start costs a refused connection until the next start. The control routes stay off, and `--enable-sleep-mode` stays in `serve.sh` because the increment 4 numbers were measured with it. Revisited when an unattended job needs the server back without a restart.
+
+## Increment 6: coding harness
+
+Dates: 2026-10-19.
+
+Brief: opencode 1.19.3, a terminal coding agent under the MIT license, runs against the local model server. It reads, searches, edits and runs commands in the folder it is started in; the model asks for each of those with a tool request that the server's `qwen3_coder` parser turns into JSON. The release is pinned by version and hash in `config/opencode/opencode.env`. `scripts/harness/install-opencode.sh` downloads it, checks the hash, unpacks it under the private runtime folder and links `~/.local/bin/opencode` to `scripts/harness/opencode.sh`, which starts it with `config/opencode/opencode.json` and the switches below.
+
+Decisions (2026-10-19): opencode first, Qwen Code only if the twenty-step test had failed; one git worktree per task, the agent never commits; the monorepo cycle is run by hand inside its dev shell.
+
+What could leave the machine, read from the source at tag v1.19.3, and the switch for each:
+
+- The model catalogue, fetched from the opencode site at start and every hour: `OPENCODE_DISABLE_MODELS_FETCH=true`. A provider defined in the settings does not need it.
+- A version check against the npm registry, made by the terminal window: `OPENCODE_DISABLE_AUTOUPDATE=true` and `"autoupdate": false`.
+- Language servers and formatters, downloaded on first use: none configured, and `OPENCODE_DISABLE_LSP_DOWNLOAD=true`.
+- An npm install of `@opencode-ai/plugin` into the settings folder on every start when that folder lacks it, with no switch in the code: the install script seeds `~/.config/opencode` with the pinned package once, and the launcher points the npm registry at a closed local port.
+- Sharing is discontinued in this release; `"share": "disabled"` stays as a guard. Web fetch and web search are denied. The code has no telemetry.
+
+Skills: opencode reads the skill folders of other coding tools in the home folder and lists every skill it finds in the fixed part of every session. That is off (`OPENCODE_DISABLE_EXTERNAL_SKILLS`); own skills come from `skills.paths`. The skill with the monorepo's layout and build recipes lives outside the repository.
+
+Other settings: `"snapshot": false`, since opencode would otherwise keep a second git index per project under its data folder; `small_model` is the same model, so the title it writes for each session is also local; `limit.context` 131,072 and `limit.output` 32,768, which opencode caps at 32,000 tokens per answer. Thinking effort stays at the server default.
+
+Found while building:
+
+- `opencode run` reads standard input to its end when it is not a terminal. Started from a script with an open pipe, it waited forever before its first request. The runner closes stdin.
+- opencode writes a 40-byte project id file into the repository's `.git` folder; for a linked worktree, into the main repository's `.git`. Nothing else is written into the project.
+- Tracing the binary's system calls stalls it, so the egress check runs one task inside a network namespace whose only way out is a local socket to the server.
+- Tools sent under `opencode run`: bash, edit, glob, grep, read, skill, task, todowrite, write. The question tool is off without a terminal, and webfetch is denied.
+
+Check: `scripts/harness/run-session.py` builds a small Python project with one failing test and runs twenty requests in one session: read, docstrings, run the tests, fix the bug, find the callers, rename a function across files, add functions and tests, a `--json` flag, an error exit, a subprocess test, a cleanup, a summary. Every request to the server and every answer are recorded through `scripts/harness/record-proxy.py`; `score.py` counts tool requests, malformed ones, repeats and error results; the runner checks the project's end state ten ways. The same recording is the input of `replay.py`, the gate for later server changes.
+
+| Measure | Result |
+|---|---|
+| Fixed part of every session | 10,002-character system prompt and 9 tool definitions; 7,256 tokens with the first question |
+| First answer of a session, two file reads | first token after 1.3 s, done in 2.9 s |
+| Twenty steps, streaming | 60 requests, 52 tool requests, 0 malformed, 0 repeated, 0 tool errors, 0 refused permissions, 10 of 10 end-state checks, 4.1 min |
+| Twenty steps, non-streaming parser | 61 requests, 55 tool requests, 0 malformed, 0 repeated, 0 tool errors, 0 refused permissions, 10 of 10 end-state checks, 4.1 min |
+| Replay of the streamed recording, 60 requests | 60 of 60 answered and parsed; 45 asked for the same tools as recorded, 59 the same finish reason; 3.6 min |
+| Tokens over the streamed session | 997,622 prompt tokens, largest request 25,850; 13,371 generated, of which 6,806 thinking; median first token 0.36 s |
+| One task inside a network namespace with no route out | done in 4 s, 1 tool call, no connection failure in the debug log |
+
+Still open: the edit, build and test cycle in a monorepo worktree, run by hand.

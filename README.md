@@ -11,6 +11,8 @@ It is built one increment at a time. `DEVLOG.md` records what each increment bui
 - `config/vllm/`: the model server's pinned settings, package lock and start script
 - `config/systemd/`: the service definition template
 - `scripts/serve/`: install, download, service setup, check and ask scripts for the model server
+- `config/opencode/`: the coding harness's pinned release and its settings
+- `scripts/harness/`: install and start scripts for the harness, the recording proxy, the twenty-step test, its scorer and the replay
 - `docs/decisions/`: decision records
 
 ## What is never here
@@ -43,6 +45,27 @@ The service is not enabled at boot. It holds about 58 GB of GPU memory while it 
 ## Measuring the server
 
 `scripts/measure/run.sh` measures speed, answer quality, cache reuse and GPU power with the service stopped, MTP on and off in turns, and writes everything under `~/agent-data/measure/results/<date>`. `scripts/measure/report.py` turns a results folder into the tables in `docs/measurements.md`. The prompts come from public code and from `scripts/measure/quality.jsonl`, 24 short tasks a script can grade.
+
+
+## Running the coding harness
+
+opencode, pinned in `config/opencode/opencode.env`, works on files with the local model: it reads, searches, edits and runs commands in the folder it is started in. Once:
+
+    scripts/harness/install-opencode.sh    # downloads the release, checks its hash, links ~/.local/bin/opencode
+
+Then, with the model server running, inside a git worktree made for the task:
+
+    git worktree add ../project-task -b task
+    cd ../project-task
+    opencode                               # the terminal window; `opencode run "..."` for one task without it
+
+`~/.local/bin/opencode` is `scripts/harness/opencode.sh`, which starts the pinned release with `config/opencode/opencode.json` and the switches that keep it on this machine: the model is the local server, sharing and the update check are off, the model catalogue and language servers are not downloaded, web fetch and web search are denied, and the skills of other tools in the home folder are ignored. The agent never commits; review the diff and commit yourself.
+
+Checks:
+
+    scripts/harness/egress-check.sh DIR     # one task inside a network namespace that can only reach the model server
+    scripts/harness/run-session.py --out OUT [--stream off]   # the twenty-step test on a scratch project, recorded
+    scripts/harness/replay.py OUT/recording # sends the recorded requests again and compares the tool calls
 
 ## License
 
