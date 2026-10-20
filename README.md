@@ -70,7 +70,7 @@ Checks:
     scripts/harness/run-session.py --out OUT [--stream off]   # the twenty-step test on a scratch project, recorded
     scripts/harness/replay.py OUT/recording # sends the recorded requests again and compares the tool calls
     scripts/harness/repo-facts.py --questions scripts/harness/repo-facts.example.json --project DIR --out OUT --ab
-                                            # factual questions, each in a fresh session, scored; --ab also runs the settings without the rules
+                                            # factual questions, each in a fresh session, scored; --ab also runs the settings without the rules, agents, commands and skills
 
 ## License
 

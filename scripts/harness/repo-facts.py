@@ -7,9 +7,10 @@ with a line `ANSWER: ...`; that line is scored. Question types: number (within a
 tolerance), contains (every string, case ignored), contains_any, regex. Several settings
 files can be given; they run in turns, round after round, for an alternating comparison,
 and --ab adds a baseline made from the first settings file without its instructions,
-agents and commands. Standard library only.
+agents, commands and skills; --keep-skills leaves the skills in the baseline, which only
+makes sense when no skill holds the answers. Standard library only.
 
-Usage: repo-facts.py --questions FILE.json|FILE.jsonl --project DIR --out DIR [--config FILE]... [--ab]
+Usage: repo-facts.py --questions FILE.json|FILE.jsonl --project DIR --out DIR [--config FILE]... [--ab] [--keep-skills]
          [--rounds 1] [--agent plan] [--limit N] [--ids a,b] [--base http://127.0.0.1:8000]
          [--proxy-port 8011] [--timeout 900] [--dry-run] [--selftest]
 Question line: {"id": "q1", "question": "...", "type": "number", "answer": 3, "tolerance": 0}
@@ -34,7 +35,7 @@ SUFFIX = ("\n\nAnswer from the files and from commands you run, not from memory.
           "nothing after it. If it cannot be determined, end with `ANSWER: unknown`.")
 ANSWER_RE = re.compile(r"^\s*[*_`]*\s*ANSWER\s*[*_`]*\s*:\s*[*_`]*\s*(.+?)\s*$", re.I | re.M)
 NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
-LEVERS = ("instructions", "agent", "command")
+LEVERS = ("instructions", "agent", "command", "skills")
 
 
 def load_questions(path):
@@ -88,11 +89,11 @@ def resolve_file_refs(obj, base):
     return obj
 
 
-def prepare_config(path, proxy_port, dest, strip=False):
+def prepare_config(path, proxy_port, dest, strip=()):
+    """Writes a copy of the settings pointed at the proxy, without the keys named in strip."""
     cfg = resolve_file_refs(json.load(open(path)), os.path.dirname(os.path.abspath(path)))
-    if strip:
-        for key in LEVERS:
-            cfg.pop(key, None)
+    for key in strip:
+        cfg.pop(key, None)
     for prov in cfg.get("provider", {}).values():
         prov.setdefault("options", {})["baseURL"] = f"http://127.0.0.1:{proxy_port}/v1"
     json.dump(cfg, open(dest, "w"), indent=1)
@@ -242,7 +243,8 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--config", action="append", help="settings file; repeatable, run in turns")
     ap.add_argument("--ab", action="store_true", help="also run a baseline: the first settings file without "
-                                                      "instructions, agents and commands")
+                                                      "instructions, agents, commands and skills")
+    ap.add_argument("--keep-skills", action="store_true", help="leave the skills in the baseline")
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--agent", default="plan")
     ap.add_argument("--limit", type=int)
@@ -270,6 +272,7 @@ def main():
         if any(v[0] == name for v in variants):
             name = f"{name}{i}"
         variants.append((name, path, False))
+    strip_keys = tuple(k for k in LEVERS if not (a.keep_skills and k == "skills"))
     order = [v[0] for v in variants]
     print(f"{len(questions)} questions, agent {a.agent}, {a.rounds} round(s) of: {', '.join(order)}")
     if a.dry_run:
@@ -289,7 +292,8 @@ def main():
             os.makedirs(runs)
             env = dict(os.environ)
             env.update(make_xdg(os.path.join(out, "xdg", name)))
-            env["OPENCODE_CONFIG"] = prepare_config(path, a.proxy_port, os.path.join(out, f"opencode.{name}.json"), strip)
+            env["OPENCODE_CONFIG"] = prepare_config(path, a.proxy_port, os.path.join(out, f"opencode.{name}.json"),
+                                                    strip_keys if strip else ())
             proxy = subprocess.Popen([sys.executable, os.path.join(HERE, "record-proxy.py"), "--out", rec, "--listen",
                                       str(a.proxy_port), "--upstream", a.base, "--stream", "passthrough"],
                                      stdout=open(os.path.join(out, f"proxy-{tag}.log"), "w"), stderr=subprocess.STDOUT)

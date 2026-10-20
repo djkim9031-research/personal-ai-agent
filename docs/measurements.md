@@ -123,4 +123,35 @@ What it says:
 | Answer checked claim by claim | 28 claims: 13 correct, 14 partly wrong, 1 wrong |
 | Causes of the 15 flawed claims | 3 estimated counts, 6 paraphrased or inferred names and descriptions, 4 documented rules not checked against the code, 2 mechanisms described wrongly |
 
-The error rate of factual answers is measured from here on with `scripts/harness/repo-facts.py`, with and without the working rules; the first baseline is still to be run.
+The error rate of factual answers is measured from here on with `scripts/harness/repo-facts.py`, with and without the working rules.
+
+### 2026-10-20: repo-facts test in the monorepo worktree, plan agent, with and without the working rules
+
+33 private single-fact questions (counts, names, acronyms, mechanisms, each verified by command beforehand), every question in a fresh headless session, two rounds, the two settings in turns.
+
+| Measure | Without the rules | With the rules |
+|---|---|---|
+| Runs | 66 | 66 |
+| Correct as scored | 60 | 58 |
+| Correct after the review of every answer marked wrong, 64 valid runs | 63 | 63 |
+| Median per question | 23.4 s, 4.5 tool calls | 25.4 s, 4.5 tool calls |
+| Total time | 54 min | 73 min |
+| Requests and prompt tokens | 374; 5,142,000 | 405; 7,293,000 |
+| Generated tokens, of which thinking | 141,600; 96,400 | 175,300; 122,000 |
+| Runs over 120 s | 7 | 11 |
+| Runs over 200,000 prompt tokens | 5, holding 1,716,000 tokens | 6, holding 3,581,000 tokens |
+| Tool errors | 4, all the grep tool's output limit | 8: 4 of those, 4 denied writes to a scratch directory |
+| Runs without an answer | 0 | 1: a read outside the worktree, auto-rejected headless |
+| Verify subagent called | not available | 4 of 66 runs |
+
+A first pass over the first 10 questions, one round, scored 8 and 8 of 10; after the same review 9 and 10.
+
+The review of the 14 runs marked wrong: 12 marks were defects of the question set, not of the model. Two questions were ambiguous between a direct and a recursive directory count; the model gave both numbers in its reply and put the recursive one on the answer line (4 runs). One expected answer was narrower than the code, and the model's answer was right with evidence (4 runs). One question assumed a single table row where the table has nine; "unknown" twice was the right answer under the rules (3 runs). One answer key was too strict for a correct answer (1 run). One count in the answer key was wrong by two, and all four runs had the right number; it was inside the tolerance and so was never flagged. The 2 remaining failures: an answer line carrying a count where the list was asked for, with the list in the reply above it; and the headless run stopped by the permission prompt. The question set and the answer key were corrected.
+
+Two defects of the test itself: both settings listed the private fact sheet as a skill, and the model loaded it in 15 of 132 runs, mostly on the product-description questions, so those answers were guided by the sheet; the runner now strips the skills in the baseline with the other pieces. And an answer key is a set of claims like any other: it was checked by the same method as the answers and lost on three questions.
+
+What it says:
+
+- **On single-fact questions the rules change nothing.** Both settings answer 63 of 64 once the key is right. The set does not reach the failure the rules were written for, which was a broad question answered from four merged subagent reports; that check is the window test, claim by claim.
+- **The rules cost 42 percent more prompt tokens and 35 percent more time**, almost all of it in three questions (1,865,000 of the 2,151,000-token difference): with the rules the model kept corroborating a documented statement against the code after it had the answer, once by trying to write a scratch Bazel module to test a semantic, which the plan agent's write rule denied. The 2,400 characters the rules add to every request account for about 250,000 tokens of the difference.
+- **"Unknown" is the rules working.** Where the question had no single answer the model said so twice instead of picking a row; the baseline picked a row once.
