@@ -55,12 +55,28 @@
         "task": "deny",
         "todowrite": "deny"
       }
+    },
+    "check": {
+      "description": "The verifier as a primary agent for headless runs by scripts/harness/ask.py; hidden from the window.",
+      "mode": "primary",
+      "hidden": true,
+      "prompt": "{file:prompts/verify.md}",
+      "steps": 40,
+      "permission": {
+        "edit": "deny",
+        "task": "deny",
+        "todowrite": "deny"
+      }
     }
   },
   "command": {
     "verify": {
       "description": "check the factual claims of the last answer against the repository",
       "template": "Verify your last answer. 1. List every factual claim in it as numbered lines: counts, names, acronym expansions, descriptions of components, mechanisms, file paths. 2. Call the verify subagent with the task tool (subagent_type \"verify\") and give it the numbered list and the project directory; ask it for the verdict table. 3. Show its table, then give the corrected answer with every corrected claim marked. $ARGUMENTS"
+    },
+    "ask": {
+      "description": "answer a question in four steps: narrow questions, one explore subagent each, verify, compose",
+      "template": "Answer the question at the end in four steps and show each step. 1. Write the narrow factual questions behind it, 3 to 12, each answerable by one command or one file. 2. For each question call the task tool with subagent_type \"explore\" and that question alone; keep its evidence table. 3. Call the task tool with subagent_type \"verify\" with the numbered question and answer pairs and the project directory; show its verdict table. 4. Write the answer from the verified pairs only, citing them by number; where the pairs do not cover a part of the question, write \"not checked\". Question: $ARGUMENTS"
     }
   }
 }
