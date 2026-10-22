@@ -113,6 +113,8 @@ check(all(st["status"] == "done" for st in s["steps"] + ss["steps"]), "a step di
 # resume
 g = load(f"{out}/narrow/graph.json")["nodes"]
 check(g.get("compose", {}).get("status") == "done", f"compose after resume: {g.get('compose', {}).get('status')}")
+models = {k for k, v in g.items() if v["kind"] == "model"}
+check(models == set(ids), f"graph.json after resume lists model nodes {sorted(models)}, expected {sorted(ids)}")
 check(all(v["status"] == "reused" for k, v in g.items() if v["kind"] == "model" and k != "compose"),
       "a model node other than compose was not reused")
 sr = load(f"{out}/narrow/summary.json")

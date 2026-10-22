@@ -383,6 +383,7 @@ def run_flow(name, flow, ctx, a):
             for job in jobs:
                 if reusable(job["iid"], spec_hash, job["inputs_hash"]):
                     results[job["iid"]] = load(job["iid"])
+                    save(results[job["iid"]])
                 else:
                     pending.append(job)
 
