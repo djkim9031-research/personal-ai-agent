@@ -7,10 +7,13 @@ answer pair against the repository; the answer is then composed from the verifie
 Broad mode: one session answers the question as asked; the model lists the claims in its
 answer; the verifier checks them; the model rewrites the answer with the corrections marked.
 Every step is its own opencode run, so no step depends on the model remembering a rule.
-Standard library only.
+--no-skills leaves the skills out of the settings copy, so that a fact sheet cannot stand in for
+the repository when the model's own reading is what is measured. The verifier agents never see
+the skills: their settings deny the skill tool. Standard library only.
 
 Usage: ask.py --project DIR [--mode narrow|broad] [--out DIR] [--agent plan] [--checker check]
-              [--max-questions 12] [--timeout 900] [--server URL] [--isolate] [--dry-run] "question"
+              [--max-questions 12] [--timeout 900] [--server URL] [--isolate] [--no-skills]
+              [--dry-run] "question"
 """
 import argparse
 import datetime
@@ -124,13 +127,16 @@ def table_rows(text):
     return rows
 
 
-def settings(server, dest):
-    """A copy of the settings pointed at another model server, for the proxy or a stand-in."""
+def settings(dest, server=None, strip=()):
+    """A copy of the settings without the keys named in strip, pointed at another model server when given."""
     src = os.environ.get("OPENCODE_CONFIG", os.path.join(REPO, "config/opencode/opencode.json"))
     cfg = FACTS.resolve_file_refs(json.load(open(src)), os.path.dirname(os.path.abspath(src)))
-    base = server.rstrip("/")
-    for prov in cfg.get("provider", {}).values():
-        prov.setdefault("options", {})["baseURL"] = base if base.endswith("/v1") else base + "/v1"
+    for key in strip:
+        cfg.pop(key, None)
+    if server:
+        base = server.rstrip("/")
+        for prov in cfg.get("provider", {}).values():
+            prov.setdefault("options", {})["baseURL"] = base if base.endswith("/v1") else base + "/v1"
     json.dump(cfg, open(dest, "w"), indent=1)
     return dest
 
@@ -247,6 +253,8 @@ def main():
     ap.add_argument("--timeout", type=int, default=900, help="seconds per step")
     ap.add_argument("--server", help="model server URL to point the settings at: the recording proxy or a stand-in")
     ap.add_argument("--isolate", action="store_true", help="private opencode data directories under --out")
+    ap.add_argument("--no-skills", action="store_true",
+                    help="leave the skills out of the settings copy, so the answer comes from the repository alone")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     if not a.question or not a.question.strip():
@@ -258,7 +266,7 @@ def main():
         flow = ("decompose (agent %s) -> one fresh session per question (agent %s) -> verify (agent %s) -> compose (agent %s)"
                 if a.mode == "narrow" else "answer (agent %s) -> claims (same session, agent %s) -> verify (agent %s) -> correct (same session, agent %s)")
         print(f"mode {a.mode}: " + flow % (a.agent, a.agent, a.checker, a.agent))
-        print(f"project {a.project}\nfirst prompt:\n{first}")
+        print(f"project {a.project}\nskills {'left out' if a.no_skills else 'as configured'}\nfirst prompt:\n{first}")
         return 0
     out = os.path.abspath(a.out or os.path.join(os.path.expanduser("~/agent-data/ask"),
                                                 datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
@@ -267,16 +275,17 @@ def main():
     env = dict(os.environ)
     if a.isolate:
         env.update(FACTS.make_xdg(os.path.join(out, "xdg")))
-    if a.server:
-        env["OPENCODE_CONFIG"] = settings(a.server, os.path.join(out, "opencode.json"))
-    say(f"ask, mode {a.mode}: {q}")
+    if a.server or a.no_skills:
+        env["OPENCODE_CONFIG"] = settings(os.path.join(out, "opencode.json"), a.server, ("skills",) if a.no_skills else ())
+    skills = "left out" if a.no_skills else "as configured"
+    say(f"ask, mode {a.mode}, skills {skills}: {q}")
     final, lines, verify_text, steps = (narrow if a.mode == "narrow" else broad)(q, a, env, steps_dir)
     seconds, tools = sum(s["seconds"] for s in steps), sum(s["tools"] for s in steps)
     verdicts = {}
     for line in lines[2:]:
         v = line.split("|")[-3].strip() if a.mode == "narrow" else line.split("|")[-3].strip()
         verdicts[v] = verdicts.get(v, 0) + 1
-    report = [f"# {q}", "", f"mode {a.mode}, agent {a.agent}, checker {a.checker}, project {a.project}, "
+    report = [f"# {q}", "", f"mode {a.mode}, agent {a.agent}, checker {a.checker}, skills {skills}, project {a.project}, "
               f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", "", "## Answer", "", final, ""]
     if lines:
         report += ["## Claims and verdicts", ""] + lines + [""]
@@ -284,7 +293,7 @@ def main():
                "| step | seconds | tool calls | tool errors | rejected | exit |", "|---|---|---|---|---|---|"]
     report += [f"| {s['step']} | {s['seconds']} | {s['tools']} | {s['errors']} | {s['rejected']} | {s['exit']} |" for s in steps]
     open(os.path.join(out, "report.md"), "w").write("\n".join(report) + "\n")
-    json.dump({"question": q, "mode": a.mode, "verdicts": verdicts, "seconds": round(seconds, 1), "tools": tools,
+    json.dump({"question": q, "mode": a.mode, "skills": skills, "verdicts": verdicts, "seconds": round(seconds, 1), "tools": tools,
                "steps": [{k: v for k, v in s.items() if k != "text"} for s in steps]},
               open(os.path.join(out, "summary.json"), "w"), indent=1)
     print(final)

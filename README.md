@@ -64,7 +64,7 @@ Then, with the model server running, inside a git worktree made for the task:
 
 Every session also reads `config/opencode/AGENTS.md`, the working rules: numbers only from commands, names only with their source, guesses marked as inferred, one question per subagent, a verify pass before a factual answer. The built-in explore subagent runs on `config/opencode/prompts/explore.md` with a cap of 30 steps; the `verify` subagent (`prompts/verify.md`) tries to refute a list of claims against the repository, and `/verify` in the window hands it the claims of the last answer. `skills/repo-facts/` is a template for a fact sheet the model reads instead of guessing; fill it in outside the repository.
 
-`scripts/harness/ask.py --project DIR "question"` asks a question in steps the script runs itself, so no step depends on the model remembering a rule. In the default narrow mode the model writes the narrow factual questions behind the question, each is answered in a fresh session, the hidden `check` agent (the verifier as a primary agent, `prompts/verify.md`) refutes or confirms every pair against the repository, and the answer is composed from the verified pairs only, cited by number, with "not checked" where they do not reach. `--mode broad` answers in one session, has the model list its claims, checks them the same way and rewrites the answer with each correction marked. The report with every step goes under `~/agent-data/ask/`. In the window, `/ask question` asks the model to follow the same steps itself and `/verify` checks the last answer; keep one task per session and start a new session for the next.
+`scripts/harness/ask.py --project DIR "question"` asks a question in steps the script runs itself, so no step depends on the model remembering a rule. In the default narrow mode the model writes the narrow factual questions behind the question, each is answered in a fresh session, the hidden `check` agent (the verifier as a primary agent, `prompts/verify.md`) refutes or confirms every pair against the repository, and the answer is composed from the verified pairs only, cited by number, with "not checked" where they do not reach. `--mode broad` answers in one session, has the model list its claims, checks them the same way and rewrites the answer with each correction marked. `--no-skills` leaves the skills out, so a fact sheet cannot stand in for the repository when the model's own reading is what is measured; the verifier agents never see the skills. The report with every step goes under `~/agent-data/ask/`. In the window, `/ask question` asks the model to follow the same steps itself and `/verify` checks the last answer; keep one task per session and start a new session for the next.
 
 Checks:
 
@@ -73,7 +73,7 @@ Checks:
     scripts/harness/replay.py OUT/recording # sends the recorded requests again and compares the tool calls
     scripts/harness/repo-facts.py --questions scripts/harness/repo-facts.example.json --project DIR --out OUT --ab
                                             # factual questions, each in a fresh session, scored; --ab also runs the settings without the rules, agents, commands and skills
-    scripts/harness/ask-check.sh            # ask.py in both modes against the stand-in model server on a scratch project; no GPU needed
+    scripts/harness/ask-check.sh            # ask.py in both modes and with --no-skills against the stand-in model server on a scratch project; no GPU needed
 
 ## License
 
