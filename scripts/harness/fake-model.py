@@ -3,14 +3,18 @@
 
 Answers every chat completion with a canned reply chosen by the first key, in file order,
 found in the last user message; "default" otherwise. Streams when asked to. Records every
-request body when --log is given. Standard library only.
+request body when --log is given, with its number and start and end times, so that overlapping
+requests can be told apart; --delay holds every reply for that many seconds, which makes
+concurrency measurable. Standard library only.
 
-Usage: fake-model.py --port 8099 --replies FILE.json [--log FILE.jsonl]
+Usage: fake-model.py --port 8099 --replies FILE.json [--log FILE.jsonl] [--delay 0]
 Replies file: {"a phrase from the prompt": "the reply", ..., "default": "the reply otherwise"}
 """
 import argparse
 import json
 import sys
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -25,7 +29,7 @@ def last_user_text(body):
 
 
 class Handler(BaseHTTPRequestHandler):
-    replies, log = {}, None
+    replies, log, delay, lock, count = {}, None, 0.0, threading.Lock(), 0
 
     def log_message(self, *args):
         pass
@@ -42,13 +46,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"object": "list", "data": [{"id": "local-primary", "object": "model"}]})
 
     def do_POST(self):
+        t_start = time.time()
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         text = last_user_text(body)
         key = next((k for k in self.replies if k != "default" and k in text), "default")
         reply = self.replies.get(key, "ok")
+        if self.delay:
+            time.sleep(self.delay)
         if self.log:
-            self.log.write(json.dumps({"path": self.path, "matched": key, "body": body}) + "\n")
-            self.log.flush()
+            with self.lock:
+                Handler.count += 1
+                self.log.write(json.dumps({"n": Handler.count, "path": self.path, "matched": key, "t_start": t_start,
+                                           "t_end": time.time(), "body": body}) + "\n")
+                self.log.flush()
         usage = {"prompt_tokens": len(text) // 4, "completion_tokens": len(reply) // 4,
                  "total_tokens": len(text) // 4 + len(reply) // 4}
         if not body.get("stream"):
@@ -78,10 +88,12 @@ def main():
     ap.add_argument("--port", type=int, default=8099)
     ap.add_argument("--replies", required=True)
     ap.add_argument("--log")
+    ap.add_argument("--delay", type=float, default=0.0, help="seconds to hold every reply")
     a = ap.parse_args()
     Handler.replies = json.load(open(a.replies))
     Handler.log = open(a.log, "a") if a.log else None
-    print(f"stand-in model on 127.0.0.1:{a.port}, {len(Handler.replies)} replies", file=sys.stderr, flush=True)
+    Handler.delay = a.delay
+    print(f"stand-in model on 127.0.0.1:{a.port}, {len(Handler.replies)} replies, delay {a.delay} s", file=sys.stderr, flush=True)
     ThreadingHTTPServer(("127.0.0.1", a.port), Handler).serve_forever()
 
 

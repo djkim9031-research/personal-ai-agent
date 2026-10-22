@@ -1,306 +1,133 @@
 #!/usr/bin/env python3
-"""Asks a question about a codebase in steps the harness runs, and verifies the answer.
+"""Asks a question about a codebase as a graph of opencode runs, and verifies the answer.
 
-Narrow mode, the default: the model writes the narrow factual questions behind the question;
-each is answered in a fresh session with its evidence; the verifier checks every question and
-answer pair against the repository; the answer is then composed from the verified pairs only.
-Broad mode: one session answers the question as asked; the model lists the claims in its
-answer; the verifier checks them; the model rewrites the answer with the corrections marked.
-Every step is its own opencode run, so no step depends on the model remembering a rule.
---no-skills leaves the skills out of the settings copy, so that a fact sheet cannot stand in for
-the repository when the model's own reading is what is measured. The verifier agents never see
-the skills: their settings deny the skill tool. Standard library only.
+The flows are data in ask_flows.py, run by graph.py: every node names its agent, prompt, session,
+thinking effort, skills and budget, and the text of one node fills the prompt of the next, so no
+step depends on the model remembering a rule. Narrow mode, the default: the model splits the
+question into fact questions (one command or one file each) and mechanism questions (a chain of
+path:line hops); each is answered in a fresh session, several at a time in private opencode homes;
+the hidden check agent verifies them in batches; the answer is composed from the verified pairs
+only. Broad mode: one session answers, lists its claims, the checker verifies them in batches, and
+the session rewrites the answer when a claim was partly or wrong. Verifyset mode checks a file of
+claims with known truth, to measure the checker itself. --no-skills leaves the skills out, so a fact
+sheet cannot stand in for the repository; the verifier agents never see the skills. --effort sets
+the thinking effort per node, --resume reruns only what changed, --dry-run prints the graph.
+Standard library only.
 
-Usage: ask.py --project DIR [--mode narrow|broad] [--out DIR] [--agent plan] [--checker check]
-              [--max-questions 12] [--timeout 900] [--server URL] [--isolate] [--no-skills]
+Usage: ask.py --project DIR [--mode narrow|broad|verifyset] [--claims FILE] [--out DIR] [--resume DIR]
+              [--agent plan] [--checker check] [--max-questions 12] [--timeout 900] [--concurrency 4]
+              [--effort node=variant,...] [--scope work|personal|check] [--server URL] [--no-skills]
               [--dry-run] "question"
 """
 import argparse
 import datetime
-import importlib.util
 import json
 import os
-import re
-import subprocess
 import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(HERE))
-LAUNCHER = os.path.join(HERE, "opencode.sh")
+sys.path.insert(0, HERE)
+import graph  # noqa: E402
+from ask_flows import FLOWS  # noqa: E402
+
+say = graph.say
 
 
-def shared():
-    """The pieces shared with the repo-facts test: the answer-line suffix, its parser, the settings copy."""
-    spec = importlib.util.spec_from_file_location("repo_facts", os.path.join(HERE, "repo-facts.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-FACTS = shared()
-
-DECOMPOSE = """Do not answer the question below yet. Write the narrow factual questions whose answers, taken together, answer it. Each question must have one answer that one command or one file can give: a count, a name, a path, a quoted line, a yes or no. Look at the repository first if you need to know what exists. Write between 3 and {n} questions, one per line, numbered 1., 2., 3. and so on, and nothing after the list.
-
-Question: {q}"""
-
-VERIFY = """Project directory: {project}
-
-Claims to check:
-{claims}
-
-Check every claim against the repository and return your report."""
-
-COMPOSE = """Answer the question below from the verified facts listed under it and from nothing else. They were checked against the repository. After each statement, cite the facts it rests on by number in square brackets. Where the facts do not cover a part of the question, write "not checked" for that part instead of filling it in.
-
-Question: {q}
-
-Verified facts:
-{facts}"""
-
-CLAIMS = ("List every factual claim in your last answer as numbered lines, one claim per line, numbered 1., 2., 3. "
-          "and so on, and nothing else: counts, names, acronym expansions, descriptions of components, mechanisms, "
-          "file paths.")
-
-CORRECT = """A verifier checked the claims of your answer against the repository. Its report:
-
-{report}
-
-Rewrite your answer. Fix every claim marked partly or wrong using the correction and mark each fixed sentence [corrected]. Mark every claim found unverifiable [inferred]. Do not add claims that were not checked."""
-
-NUMBERED = re.compile(r"^\s*(?:[-*]\s+)?(\d+)[.)]\s*(.+?)\s*$")
-
-
-def say(msg):
-    print(msg, file=sys.stderr, flush=True)
-
-
-def as_text(b):
-    return b.decode(errors="replace") if isinstance(b, bytes) else (b or "")
-
-
-def numbered_block(text):
-    """The last list of lines numbered 1., 2., 3. in the text, markup stripped."""
-    blocks, current, expect = [], [], 1
-    for line in text.splitlines():
-        m = NUMBERED.match(line)
-        if not m:
-            continue
-        n, item = int(m.group(1)), m.group(2).strip(" *_`")
-        if n == expect:
-            current.append(item)
-            expect += 1
-        elif n == 1:
-            if current:
-                blocks.append(current)
-            current, expect = [item], 2
-    if current:
-        blocks.append(current)
-    return blocks[-1] if blocks else []
-
-
-def verdict_of(cell):
-    c = cell.lower()
-    if "unverif" in c:
-        return "unverifiable"
-    if "wrong" in c or "incorrect" in c:
-        return "wrong"
-    if "partly" in c or "partial" in c:
-        return "partly"
-    if "correct" in c:
-        return "correct"
-    return ""
-
-
-def table_rows(text):
-    """The verifier's table: claim number -> verdict, evidence, correction."""
-    rows = {}
-    for line in text.splitlines():
-        if not line.strip().startswith("|"):
-            continue
+def count_verdicts(lines):
+    """Verdict counts from a claims table, by its header's verdict column."""
+    counts = {}
+    if len(lines) < 3:
+        return counts
+    head = [c.strip().lower() for c in lines[0].strip().strip("|").split("|")]
+    col = head.index("verdict") if "verdict" in head else -2
+    for line in lines[2:]:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 3 or not cells[0].isdigit():
-            continue
-        verdict = verdict_of(cells[2]) or next((verdict_of(c) for c in cells[1:] if verdict_of(c)), "unparsed")
-        rows[int(cells[0])] = {"verdict": verdict, "evidence": cells[3] if len(cells) > 3 else "",
-                               "correction": cells[4] if len(cells) > 4 else ""}
-    return rows
-
-
-def settings(dest, server=None, strip=()):
-    """A copy of the settings without the keys named in strip, pointed at another model server when given."""
-    src = os.environ.get("OPENCODE_CONFIG", os.path.join(REPO, "config/opencode/opencode.json"))
-    cfg = FACTS.resolve_file_refs(json.load(open(src)), os.path.dirname(os.path.abspath(src)))
-    for key in strip:
-        cfg.pop(key, None)
-    if server:
-        base = server.rstrip("/")
-        for prov in cfg.get("provider", {}).values():
-            prov.setdefault("options", {})["baseURL"] = base if base.endswith("/v1") else base + "/v1"
-    json.dump(cfg, open(dest, "w"), indent=1)
-    return dest
-
-
-def run(step, prompt, a, env, steps_dir, agent=None, session=None, title=None):
-    """One opencode run; returns its text, session id and counts, and keeps the raw events."""
-    cmd = [LAUNCHER, "run", "--dir", a.project, "--format", "json"]
-    cmd += ["--session", session] if session else ["--title", title or f"ask {step}"]
-    if agent:
-        cmd += ["--agent", agent]
-    cmd.append(prompt)
-    t0 = time.time()
-    try:
-        p = subprocess.run(cmd, cwd=a.project, env=env, capture_output=True, text=True, timeout=a.timeout,
-                           stdin=subprocess.DEVNULL)  # opencode reads stdin to its end when it is not a terminal
-        rc, stdout, stderr = p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired as e:
-        rc, stdout, stderr = -1, as_text(e.stdout), as_text(e.stderr) + "\nTIMEOUT"
-    open(os.path.join(steps_dir, f"{step}.out"), "w").write(stdout)
-    open(os.path.join(steps_dir, f"{step}.err"), "w").write(stderr)
-    texts, tools, errors, sid = [], 0, 0, session
-    for line in stdout.splitlines():
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        if ev.get("sessionID") and not sid:
-            sid = ev["sessionID"]
-        part = ev.get("part") or {}
-        if ev.get("type") == "tool_use":
-            tools += 1
-            errors += (part.get("state") or {}).get("status") == "error"
-        elif ev.get("type") == "text":
-            texts.append(part.get("text") or "")
-        elif ev.get("type") == "error":
-            errors += 1
-    r = {"step": step, "exit": rc, "seconds": round(time.time() - t0, 1), "tools": tools, "errors": errors,
-         "rejected": stderr.count("auto-rejecting"), "text": "\n".join(texts).strip(), "session": sid}
-    say(f"[{step}] {r['seconds']} s, {tools} tool calls, {errors} errors, {r['rejected']} rejected, exit {rc}")
-    return r
-
-
-def narrow(q, a, env, steps_dir):
-    steps = []
-    r = run("decompose", DECOMPOSE.format(q=q, n=a.max_questions), a, env, steps_dir, agent=a.agent, title=f"ask: {q[:60]}")
-    steps.append(r)
-    questions = numbered_block(r["text"])[:a.max_questions]
-    say(f"  {len(questions)} questions")
-    if not questions:
-        return r["text"] or "no questions were produced; see steps/decompose.out", [], "", steps
-    pairs = []
-    for i, nq in enumerate(questions, 1):
-        rr = run(f"q{i:02d}", nq + FACTS.SUFFIX, a, env, steps_dir, agent=a.agent, title=f"ask {i}: {nq[:60]}")
-        steps.append(rr)
-        answer = FACTS.extract_answer(rr["text"]) or "no answer line"
-        pairs.append({"n": i, "question": nq, "answer": answer})
-        say(f"  {nq[:70]} -> {answer[:70]}")
-    claims = "\n".join(f"{p['n']}. Question: {p['question']} Answer given: {p['answer']}" for p in pairs)
-    rv = run("verify", VERIFY.format(project=a.project, claims=claims), a, env, steps_dir, agent=a.checker, title="ask: verify")
-    steps.append(rv)
-    rows = table_rows(rv["text"])
-    say(f"  {len(rows)} verdicts parsed for {len(pairs)} pairs")
-    facts, lines = [], ["| # | question | answer | verdict | correction |", "|---|---|---|---|---|"]
-    for p in pairs:
-        row = rows.get(p["n"], {})
-        v, corr = row.get("verdict") or "not parsed", row.get("correction", "")
-        fact = f"[{p['n']}] Question: {p['question']} Answer: {p['answer']} Verdict: {v}."
-        if v in ("partly", "wrong"):
-            fact += f" Correction: {corr}" if corr else " No correction given; do not use this answer."
-        elif v == "unverifiable":
-            fact += " Use only as inferred."
-        facts.append(fact)
-        lines.append(f"| {p['n']} | {p['question']} | {p['answer']} | {v} | {corr} |")
-    rc = run("compose", COMPOSE.format(q=q, facts="\n".join(facts)), a, env, steps_dir, agent=a.agent, title="ask: compose")
-    steps.append(rc)
-    return rc["text"] or "\n".join(facts), lines, rv["text"], steps
-
-
-def broad(q, a, env, steps_dir):
-    steps = []
-    r = run("answer", q, a, env, steps_dir, agent=a.agent, title=f"ask: {q[:60]}")
-    steps.append(r)
-    if not r["session"] or not r["text"]:
-        return r["text"] or "no answer; see steps/answer.out", [], "", steps
-    rl = run("claims", CLAIMS, a, env, steps_dir, agent=a.agent, session=r["session"])
-    steps.append(rl)
-    claims = numbered_block(rl["text"])
-    say(f"  {len(claims)} claims")
-    if not claims:
-        return r["text"], [], "", steps
-    numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(claims, 1))
-    rv = run("verify", VERIFY.format(project=a.project, claims=numbered), a, env, steps_dir, agent=a.checker, title="ask: verify")
-    steps.append(rv)
-    rows = table_rows(rv["text"])
-    say(f"  {len(rows)} verdicts parsed for {len(claims)} claims")
-    rf = run("correct", CORRECT.format(report=rv["text"]), a, env, steps_dir, agent=a.agent, session=r["session"])
-    steps.append(rf)
-    lines = ["| # | claim | verdict | correction |", "|---|---|---|---|"]
-    for i, c in enumerate(claims, 1):
-        row = rows.get(i, {})
-        lines.append(f"| {i} | {c} | {row.get('verdict') or 'not parsed'} | {row.get('correction', '')} |")
-    return rf["text"] or r["text"], lines, rv["text"], steps
+        if len(cells) > abs(col):
+            counts[cells[col]] = counts.get(cells[col], 0) + 1
+    return counts
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("question", nargs="?")
     ap.add_argument("--project", required=True)
-    ap.add_argument("--mode", choices=["narrow", "broad"], default="narrow")
+    ap.add_argument("--mode", choices=sorted(FLOWS), default="narrow")
+    ap.add_argument("--claims", help="verifyset mode: a file of lines {id, claim, truth}")
     ap.add_argument("--out", help="report directory; default ~/agent-data/ask/<time>")
+    ap.add_argument("--resume", help="a report directory to run again, reusing every node whose spec and inputs are unchanged")
     ap.add_argument("--agent", default="plan", help="the agent that answers")
     ap.add_argument("--checker", default="check", help="the agent that verifies: a hidden primary agent in the settings")
     ap.add_argument("--max-questions", type=int, default=12)
-    ap.add_argument("--timeout", type=int, default=900, help="seconds per step")
+    ap.add_argument("--timeout", type=int, default=900, help="seconds per node")
+    ap.add_argument("--concurrency", type=int, default=4, help="runs at a time in a fan-out; the server takes 4")
+    ap.add_argument("--effort", default="", help="thinking effort per node, node=variant,...; variants low, medium, xhigh, off")
+    ap.add_argument("--scope", choices=["work", "personal", "check"], default="work",
+                    help="trajectory scope: work and personal runs are copied to the trajectory store, check runs are not")
     ap.add_argument("--server", help="model server URL to point the settings at: the recording proxy or a stand-in")
-    ap.add_argument("--isolate", action="store_true", help="private opencode data directories under --out")
+    ap.add_argument("--isolate", action="store_true", help="kept for older command lines; every run uses private opencode homes")
     ap.add_argument("--no-skills", action="store_true",
                     help="leave the skills out of the settings copy, so the answer comes from the repository alone")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    if not a.question or not a.question.strip():
-        ap.error("a question is required")
-    q = a.question.strip()
+    a.effort = dict(kv.split("=", 1) for kv in a.effort.split(",") if kv)
     a.project = os.path.abspath(a.project)
+    flow = FLOWS[a.mode]
+    if a.mode == "verifyset":
+        if not a.claims:
+            ap.error("--claims is required in verifyset mode")
+        rows = [json.loads(l) for l in open(a.claims) if l.strip() and not l.startswith("#")]
+        q = (a.question or "").strip() or f"verify {len(rows)} claims from {os.path.basename(a.claims)}"
+        ctx = {"question": q, "project": a.project, "claims": [r["claim"] for r in rows],
+               "truths": [bool(r["truth"]) for r in rows], "ids": [str(r.get("id", i)) for i, r in enumerate(rows, 1)]}
+    else:
+        if not a.question or not a.question.strip():
+            ap.error("a question is required")
+        q = a.question.strip()
+        ctx = {"question": q, "n": a.max_questions, "project": a.project}
     if a.dry_run:
-        first = DECOMPOSE.format(q=q, n=a.max_questions) if a.mode == "narrow" else q
-        flow = ("decompose (agent %s) -> one fresh session per question (agent %s) -> verify (agent %s) -> compose (agent %s)"
-                if a.mode == "narrow" else "answer (agent %s) -> claims (same session, agent %s) -> verify (agent %s) -> correct (same session, agent %s)")
-        print(f"mode {a.mode}: " + flow % (a.agent, a.agent, a.checker, a.agent))
-        print(f"project {a.project}\nskills {'left out' if a.no_skills else 'as configured'}\nfirst prompt:\n{first}")
+        print(graph.describe(a.mode, flow, ctx, a))
         return 0
-    out = os.path.abspath(a.out or os.path.join(os.path.expanduser("~/agent-data/ask"),
-                                                datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
-    steps_dir = os.path.join(out, "steps")
-    os.makedirs(steps_dir, exist_ok=True)
-    env = dict(os.environ)
-    if a.isolate:
-        env.update(FACTS.make_xdg(os.path.join(out, "xdg")))
-    if a.server or a.no_skills:
-        env["OPENCODE_CONFIG"] = settings(os.path.join(out, "opencode.json"), a.server, ("skills",) if a.no_skills else ())
+    a.out = os.path.abspath(a.resume or a.out or os.path.join(os.path.expanduser("~/agent-data/ask"),
+                                                                datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
+    os.makedirs(a.out, exist_ok=True)
     skills = "left out" if a.no_skills else "as configured"
-    say(f"ask, mode {a.mode}, skills {skills}: {q}")
-    final, lines, verify_text, steps = (narrow if a.mode == "narrow" else broad)(q, a, env, steps_dir)
+    say(f"ask, mode {a.mode}, skills {skills}, concurrency {a.concurrency}: {q}")
+    t0 = time.time()
+    results, ctx = graph.run_flow(a.mode, flow, ctx, a)
+    wall = round(time.time() - t0, 1)
+    final = next((results[i]["text"] for i in flow["answer"] if results.get(i, {}).get("text")), "") or flow["none"]
+    lines = (ctx.get(flow["table"]) or []) if flow["table"] else []
+    verify_text = (ctx.get(flow["verify"] + "_text") or "") if flow["verify"] else ""
+    steps = [r for r in results.values() if r["kind"] == "model"]
     seconds, tools = sum(s["seconds"] for s in steps), sum(s["tools"] for s in steps)
-    verdicts = {}
-    for line in lines[2:]:
-        v = line.split("|")[-3].strip() if a.mode == "narrow" else line.split("|")[-3].strip()
-        verdicts[v] = verdicts.get(v, 0) + 1
-    report = [f"# {q}", "", f"mode {a.mode}, agent {a.agent}, checker {a.checker}, skills {skills}, project {a.project}, "
-              f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", "", "## Answer", "", final, ""]
+    verdicts = count_verdicts(lines)
+    tokens = {k: sum(s["tokens"].get(k, 0) for s in steps) for k in graph.zero()}
+    report = [f"# {q}", "", f"mode {a.mode}, agent {a.agent}, checker {a.checker}, skills {skills}, concurrency {a.concurrency}, "
+              f"project {a.project}, {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", "", "## Answer", "", final, ""]
     if lines:
         report += ["## Claims and verdicts", ""] + lines + [""]
     report += ["## Verifier report", "", verify_text or "none", "", "## Steps", "",
-               "| step | seconds | tool calls | tool errors | rejected | exit |", "|---|---|---|---|---|---|"]
-    report += [f"| {s['step']} | {s['seconds']} | {s['tools']} | {s['errors']} | {s['rejected']} | {s['exit']} |" for s in steps]
-    open(os.path.join(out, "report.md"), "w").write("\n".join(report) + "\n")
-    json.dump({"question": q, "mode": a.mode, "skills": skills, "verdicts": verdicts, "seconds": round(seconds, 1), "tools": tools,
-               "steps": [{k: v for k, v in s.items() if k != "text"} for s in steps]},
-              open(os.path.join(out, "summary.json"), "w"), indent=1)
+               "| step | seconds | tool calls | tool errors | rejected | exit | status | variant | lane | tokens in | tokens out | reasoning |",
+               "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    report += [f"| {s['id']} | {s['seconds']} | {s['tools']} | {s['errors']} | {s['rejected']} | {s['exit']} | {s['status']} | "
+               f"{s.get('variant', '')} | {s.get('lane', '')} | {s['tokens']['input']} | {s['tokens']['output']} | "
+               f"{s['tokens']['reasoning']} |" for s in steps]
+    open(os.path.join(a.out, "report.md"), "w").write("\n".join(report) + "\n")
+    json.dump({"question": q, "mode": a.mode, "flow": a.mode, "skills": skills, "concurrency": a.concurrency,
+               "verdicts": verdicts, "seconds": round(seconds, 1), "wall": wall, "tools": tools, "tokens": tokens,
+               "steps": [{"step": s["id"], "exit": s["exit"], "seconds": s["seconds"], "tools": s["tools"],
+                          "errors": s["errors"], "rejected": s["rejected"], "session": s["session"], "status": s["status"],
+                          "variant": s.get("variant"), "lane": s.get("lane"), "agent": s.get("agent"), "tokens": s["tokens"]}
+                         for s in steps]},
+              open(os.path.join(a.out, "summary.json"), "w"), indent=1)
+    verdict_map = flow["verdicts"](ctx) if flow.get("verdicts") else {}
+    graph.trajectories(a.mode, results, a, verdict_map)
     print(final)
     if lines:
         print("\n" + "\n".join(lines))
-    print(f"\nverdicts: {', '.join(f'{v} {n}' for v, n in sorted(verdicts.items()))}; {len(steps)} steps, "
-          f"{tools} tool calls, {seconds / 60:.1f} min; report: {os.path.join(out, 'report.md')}")
+    print(f"\nverdicts: {', '.join(f'{v} {n}' for v, n in sorted(verdicts.items())) or 'none'}; {len(steps)} runs, "
+          f"{tools} tool calls, {seconds / 60:.1f} min of runs in {wall / 60:.1f} min; report: {os.path.join(a.out, 'report.md')}")
     return 0
 
 

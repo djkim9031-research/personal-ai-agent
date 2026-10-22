@@ -8,9 +8,10 @@ tolerance), contains (every string, case ignored), contains_any, regex. Several 
 files can be given; they run in turns, round after round, for an alternating comparison,
 and --ab adds a baseline made from the first settings file without its instructions,
 agents, commands and skills; --keep-skills leaves the skills in the baseline, which only
-makes sense when no skill holds the answers. Standard library only.
+makes sense when no skill holds the answers. --variant NAME adds a run of the first settings file
+with that thinking effort for the agent, alternated like the others. Standard library only.
 
-Usage: repo-facts.py --questions FILE.json|FILE.jsonl --project DIR --out DIR [--config FILE]... [--ab] [--keep-skills]
+Usage: repo-facts.py --questions FILE.json|FILE.jsonl --project DIR --out DIR [--config FILE]... [--ab] [--keep-skills] [--variant NAME]...
          [--rounds 1] [--agent plan] [--limit N] [--ids a,b] [--base http://127.0.0.1:8000]
          [--proxy-port 8011] [--timeout 900] [--dry-run] [--selftest]
 Question line: {"id": "q1", "question": "...", "type": "number", "answer": 3, "tolerance": 0}
@@ -89,11 +90,15 @@ def resolve_file_refs(obj, base):
     return obj
 
 
-def prepare_config(path, proxy_port, dest, strip=()):
-    """Writes a copy of the settings pointed at the proxy, without the keys named in strip."""
+def prepare_config(path, proxy_port, dest, strip=(), effort=None, agent="plan"):
+    """Writes a copy of the settings pointed at the proxy, without the keys named in strip; with an effort, the
+    agent gets that reasoning effort as an option (off sends none, which turns thinking off)."""
     cfg = resolve_file_refs(json.load(open(path)), os.path.dirname(os.path.abspath(path)))
     for key in strip:
         cfg.pop(key, None)
+    if effort:
+        cfg.setdefault("agent", {}).setdefault(agent, {}).setdefault("options", {})["reasoningEffort"] = (
+            "none" if effort == "off" else effort)
     for prov in cfg.get("provider", {}).values():
         prov.setdefault("options", {})["baseURL"] = f"http://127.0.0.1:{proxy_port}/v1"
     json.dump(cfg, open(dest, "w"), indent=1)
@@ -245,6 +250,8 @@ def main():
     ap.add_argument("--ab", action="store_true", help="also run a baseline: the first settings file without "
                                                       "instructions, agents, commands and skills")
     ap.add_argument("--keep-skills", action="store_true", help="leave the skills in the baseline")
+    ap.add_argument("--variant", action="append", default=[],
+                    help="also run the first settings file with this thinking effort for the agent: low, medium, xhigh or off")
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--agent", default="plan")
     ap.add_argument("--limit", type=int)
@@ -266,12 +273,14 @@ def main():
     if a.limit:
         questions = questions[:a.limit]
     configs = a.config or [os.path.join(REPO, "config/opencode/opencode.json")]
-    variants = [("baseline", configs[0], True)] if a.ab else []
+    variants = [("baseline", configs[0], True, None)] if a.ab else []
     for i, path in enumerate(configs):
         name = os.path.splitext(os.path.basename(path))[0]
         if any(v[0] == name for v in variants):
             name = f"{name}{i}"
-        variants.append((name, path, False))
+        variants.append((name, path, False, None))
+    for effort in a.variant:
+        variants.append((f"{os.path.splitext(os.path.basename(configs[0]))[0]}-{effort}", configs[0], False, effort))
     strip_keys = tuple(k for k in LEVERS if not (a.keep_skills and k == "skills"))
     order = [v[0] for v in variants]
     print(f"{len(questions)} questions, agent {a.agent}, {a.rounds} round(s) of: {', '.join(order)}")
@@ -285,7 +294,7 @@ def main():
     os.makedirs(out)
     results = []
     for r in range(1, a.rounds + 1):
-        for name, path, strip in variants:
+        for name, path, strip, effort in variants:
             tag = f"{name}-r{r}"
             rec, runs = os.path.join(out, "recording", tag), os.path.join(out, "runs", tag)
             os.makedirs(rec)
@@ -293,7 +302,7 @@ def main():
             env = dict(os.environ)
             env.update(make_xdg(os.path.join(out, "xdg", name)))
             env["OPENCODE_CONFIG"] = prepare_config(path, a.proxy_port, os.path.join(out, f"opencode.{name}.json"),
-                                                    strip_keys if strip else ())
+                                                    strip_keys if strip else (), effort, a.agent)
             proxy = subprocess.Popen([sys.executable, os.path.join(HERE, "record-proxy.py"), "--out", rec, "--listen",
                                       str(a.proxy_port), "--upstream", a.base, "--stream", "passthrough"],
                                      stdout=open(os.path.join(out, f"proxy-{tag}.log"), "w"), stderr=subprocess.STDOUT)

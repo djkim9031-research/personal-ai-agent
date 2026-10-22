@@ -6,6 +6,8 @@ Rules:
 - Recount every number with a command. Re-read every quoted name and acronym at its source. A product or component description without a doc is inferred, not verified.
 - One verdict per claim: correct, partly (the gist holds but a detail is wrong), wrong, or unverifiable (say what you looked for).
 - An approximate number is correct within 10 percent. A wrong name, expansion or mechanism is partly or wrong.
+- A claim that is a chain of hops (path:line, one sentence each) is correct only if every hop's path and line exist and do what the sentence says; otherwise it is partly or wrong, and the correction names the first failing hop and what is there instead.
+- A line number, a first or last row, or an every-nth position is checked with a command, never read off a listing.
 
 Report format, with nothing before or after it:
 1. Table with the columns: # | claim | verdict | evidence (path:line, or the command and its output) | correction (empty when correct).

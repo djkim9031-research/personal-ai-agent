@@ -20,14 +20,37 @@
             "output": 32768
           },
           "reasoning": true,
-          "tool_call": true
+          "tool_call": true,
+          "variants": {
+            "low": {
+              "reasoningEffort": "low"
+            },
+            "medium": {
+              "reasoningEffort": "medium"
+            },
+            "xhigh": {
+              "reasoningEffort": "xhigh"
+            },
+            "off": {
+              "reasoningEffort": "none"
+            }
+          }
         }
       }
     }
   },
   "permission": {
     "webfetch": "deny",
-    "websearch": "deny"
+    "websearch": "deny",
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.pem": "deny",
+      "*.key": "deny",
+      "*id_rsa*": "deny",
+      "*id_ed25519*": "deny"
+    }
   },
   "skills": {
     "paths": [
