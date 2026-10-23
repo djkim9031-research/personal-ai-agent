@@ -66,7 +66,7 @@ def numbered_block(text):
         m = NUMBERED.match(line)
         if not m:
             continue
-        n, item = int(m.group(1)), m.group(2).strip(" *_`")
+        n, item = int(m.group(1)), FACTS.unmark(m.group(2))
         if n == expect:
             current.append(item)
             expect += 1

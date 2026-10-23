@@ -35,7 +35,7 @@ LAUNCHER = os.path.join(HERE, "opencode.sh")
 SUFFIX = ("\n\nAnswer from the files and from commands you run, not from memory. Count with a command; "
           "quote the file for a name. End your reply with one line of the form `ANSWER: <value>` and "
           "nothing after it. If it cannot be determined, end with `ANSWER: unknown`.")
-ANSWER_RE = re.compile(r"^\s*[*_`]*\s*ANSWER\s*[*_`]*\s*:\s*[*_`]*\s*(.+?)\s*$", re.I | re.M)
+ANSWER_RE = re.compile(r"^\s*[*_`]*\s*ANSWER\s*[*_`]*\s*:\s*[*`]*\s*(.+?)\s*$", re.I | re.M)  # underscores stay for unmark
 NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 LEVERS = ("instructions", "agent", "command", "skills")
 
@@ -52,9 +52,18 @@ def load_questions(path):
     return out
 
 
+def unmark(s):
+    """The markup around a value removed: spaces, asterisks, backticks, and a pair of emphasis underscores;
+    a leading underscore on its own stays, because a path may begin with one."""
+    s = s.strip(" *`")
+    if len(s) > 1 and s[0] == "_" and s[-1] == "_":
+        s = s[1:-1].strip(" *`")
+    return s
+
+
 def extract_answer(text):
     found = ANSWER_RE.findall(text)
-    return found[-1].strip(" *_`") if found else ""
+    return unmark(found[-1]) if found else ""
 
 
 def score(q, value):
@@ -234,7 +243,8 @@ def selftest():
         ok &= got == want
         print(f"{'ok ' if got == want else 'BAD'} {text!r} -> {got}")
     for text, want in [("some text\nANSWER: 3\nmore", "3"), ("**ANSWER:** `42`", "42"), ("no line", ""),
-                       ("ANSWER: 1\nlater\nanswer: 2", "2")]:
+                       ("ANSWER: 1\nlater\nanswer: 2", "2"), ("ANSWER: `_domain/app`", "_domain/app"),
+                       ("ANSWER: _yes_", "yes"), ("ANSWER: **_a/b_**", "a/b")]:
         got = extract_answer(text)
         ok &= got == want
         print(f"{'ok ' if got == want else 'BAD'} extract {text!r} -> {got!r}")

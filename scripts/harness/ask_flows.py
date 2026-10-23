@@ -60,7 +60,7 @@ def two_lists(c):
             continue
         m = NUMBERED.match(line)
         if m:
-            out[cur].append(m.group(2).strip(" *_`"))
+            out[cur].append(FACTS.unmark(m.group(2)))
     return out
 
 
