@@ -9,10 +9,11 @@ files can be given; they run in turns, round after round, for an alternating com
 and --ab adds a baseline made from the first settings file without its instructions,
 agents, commands and skills; --keep-skills leaves the skills in the baseline, which only
 makes sense when no skill holds the answers. --variant NAME adds a run of the first settings file
-with that thinking effort for the agent, alternated like the others. Standard library only.
+with that thinking effort for the agent, alternated like the others; --no-skills leaves the skills out of
+every run, so a fact sheet held as a skill cannot answer for the model. Standard library only.
 
 Usage: repo-facts.py --questions FILE.json|FILE.jsonl --project DIR --out DIR [--config FILE]... [--ab] [--keep-skills] [--variant NAME]...
-         [--rounds 1] [--agent plan] [--limit N] [--ids a,b] [--base http://127.0.0.1:8000]
+         [--no-skills] [--rounds 1] [--agent plan] [--limit N] [--ids a,b] [--base http://127.0.0.1:8000]
          [--proxy-port 8011] [--timeout 900] [--dry-run] [--selftest]
 Question line: {"id": "q1", "question": "...", "type": "number", "answer": 3, "tolerance": 0}
 """
@@ -252,6 +253,7 @@ def main():
     ap.add_argument("--keep-skills", action="store_true", help="leave the skills in the baseline")
     ap.add_argument("--variant", action="append", default=[],
                     help="also run the first settings file with this thinking effort for the agent: low, medium, xhigh or off")
+    ap.add_argument("--no-skills", action="store_true", help="leave the skills out of every run")
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--agent", default="plan")
     ap.add_argument("--limit", type=int)
@@ -302,7 +304,8 @@ def main():
             env = dict(os.environ)
             env.update(make_xdg(os.path.join(out, "xdg", name)))
             env["OPENCODE_CONFIG"] = prepare_config(path, a.proxy_port, os.path.join(out, f"opencode.{name}.json"),
-                                                    strip_keys if strip else (), effort, a.agent)
+                                                    strip_keys if strip else (("skills",) if a.no_skills else ()),
+                                                    effort, a.agent)
             proxy = subprocess.Popen([sys.executable, os.path.join(HERE, "record-proxy.py"), "--out", rec, "--listen",
                                       str(a.proxy_port), "--upstream", a.base, "--stream", "passthrough"],
                                      stdout=open(os.path.join(out, f"proxy-{tag}.log"), "w"), stderr=subprocess.STDOUT)

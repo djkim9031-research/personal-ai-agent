@@ -53,7 +53,7 @@ echo; echo "== repo-facts selftest and the effort variant"
 python3 "$here/repo-facts.py" --selftest | tail -1
 python3 "$here/make-verify-set.py" --selftest | tail -1
 python3 "$here/repo-facts.py" --questions "$here/repo-facts.example.json" --project "$out/project" --out "$out/facts" \
-    --variant medium --limit 2 --proxy-port 8012 --base http://127.0.0.1:8099
+    --variant medium --no-skills --limit 2 --proxy-port 8012 --base http://127.0.0.1:8099
 n6=$(count)
 echo
 echo "requests to the stand-in: $n6; runs under $out"
@@ -136,6 +136,8 @@ for i, r in enumerate(reqs):
     else:
         want = "medium"
     check(eff == want, f"request {i} ({key}): reasoning_effort {eff!r}, expected {want!r}")
+for name in ("opencode.opencode.json", "opencode.opencode-medium.json"):
+    check("skills" not in load(f"{out}/facts/{name}"), f"repo-facts --no-skills left the skills in {name}")
 # permissions of the headless copies
 def asks(v):
     return v == "ask" or (isinstance(v, dict) and "ask" in v.values())

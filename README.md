@@ -74,7 +74,7 @@ Checks:
     scripts/harness/run-session.py --out OUT [--stream off]   # the twenty-step test on a scratch project, recorded
     scripts/harness/replay.py OUT/recording # sends the recorded requests again and compares the tool calls
     scripts/harness/repo-facts.py --questions scripts/harness/repo-facts.example.json --project DIR --out OUT --ab
-                                            # factual questions, each in a fresh session, scored; --ab also runs the settings without the rules, agents, commands and skills; --variant medium also runs them at that thinking effort
+                                            # factual questions, each in a fresh session, scored; --ab also runs the settings without the rules, agents, commands and skills; --no-skills leaves the skills out of every run; --variant medium also runs them at that thinking effort
     scripts/harness/ask-check.sh            # ask.py in every mode, resumed, with four lanes and one, plus the probe and the effort variant, against the stand-in model server; no GPU needed
 
 ## License
