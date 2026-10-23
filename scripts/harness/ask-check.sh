@@ -178,7 +178,7 @@ for i, r in enumerate(reqs):
 check(checker >= 6, f"only {checker} checker requests seen")
 # batching: two verify runs with the original claim numbers, merged in order
 v1, v2 = load(f"{out}/narrow/steps/verify01.json")["value"], load(f"{out}/narrow/steps/verify02.json")["value"]
-check(set(v1) == {"1", "2", "3"} and set(v2) == {"4", "5", "6", "7"}, f"verify batches {sorted(v1)} and {sorted(v2)}")
+check(set(v1) == {"1", "2", "3", "4", "5"} and set(v2) == {"6", "7"}, f"verify batches {sorted(v1)} and {sorted(v2)}")
 report = open(f"{out}/narrow/report.md").read()
 check("| 7 |" in report and "| 1 |" in report, "the merged claims table is missing rows")
 # trajectories

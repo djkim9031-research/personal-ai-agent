@@ -39,10 +39,10 @@ def count_verdicts(lines):
     counts = {}
     if len(lines) < 3:
         return counts
-    head = [c.strip().lower() for c in lines[0].strip().strip("|").split("|")]
+    head = [c.lower() for c in graph.cells_of(lines[0])]
     col = head.index("verdict") if "verdict" in head else -2
     for line in lines[2:]:
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = graph.cells_of(line)
         if len(cells) > abs(col):
             counts[cells[col]] = counts.get(cells[col], 0) + 1
     return counts

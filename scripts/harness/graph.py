@@ -89,13 +89,21 @@ def verdict_of(cell):
     return ""
 
 
+CELL = re.compile(r"(?<!\\)\|")
+
+
+def cells_of(line):
+    """The cells of a markdown table row; an escaped pipe stays inside its cell."""
+    return [c.strip().replace("\\|", "|") for c in CELL.split(line.strip().strip("|"))]
+
+
 def table_rows(text):
     """The verifier's table: claim number (as text) -> verdict, evidence, correction."""
     rows = {}
     for line in text.splitlines():
         if not line.strip().startswith("|"):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = cells_of(line)
         if len(cells) < 3 or not cells[0].isdigit():
             continue
         verdict = verdict_of(cells[2]) or next((verdict_of(c) for c in cells[1:] if verdict_of(c)), "unparsed")

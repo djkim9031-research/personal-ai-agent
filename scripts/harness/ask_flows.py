@@ -2,11 +2,12 @@
 
 A flow names its nodes, which of them hold the answer, the claims table, the verifier's text, and the
 message when there is no answer. Every node runs at thinking effort xhigh until the alternating runs
-settle a lower effort for it; --effort overrides per run.
+settle a lower effort for it; --effort overrides per run. The checker's batches hold about BATCH units,
+a fact being one unit and a hop chain as many units as its hops, so a batch of chains stays under the cap.
 """
 from graph import FACTS, NUMBERED
 
-BATCH = 6
+BATCH = 6  # units per verifier run: a fact is one, a hop chain as many as its hops
 
 DECOMPOSE = """Do not answer the question below yet. Write the narrow questions whose answers, taken together, answer it, in two numbered lists. Under the heading "Facts": questions that one command or one file answers: a count, a name, a path, a quoted line, a yes or no. Under the heading "Mechanisms": questions about how something happens that one chain of calls or one data flow through the code answers, from an entry point to an effect, hop by hop. Look at the repository first if you need to know what exists. Write between 3 and {n} questions in all, each list numbered from 1., one question per line; write both headings even when a list is empty, and nothing after the lists.
 
@@ -58,22 +59,34 @@ def two_lists(c):
 def pairs(c):
     """Numbered question and answer pairs: the facts, then the mechanisms with their hop chains."""
     split = c["split"]
-    qa = [(q, a or "no answer line") for q, a in zip(split["facts"], c.get("q") or [])]
-    qa += [(q, " ".join(f"({i}) {h}" for i, h in enumerate(a or [], 1)) or "no hops")
+    qa = [(q, a or "no answer line", 1) for q, a in zip(split["facts"], c.get("q") or [])]
+    qa += [(q, " ".join(f"({i}) {h}" for i, h in enumerate(a or [], 1)) or "no hops", max(1, len(a or [])))
            for q, a in zip(split["mechanisms"], c.get("m") or [])]
-    return [{"n": i, "question": q, "answer": a} for i, (q, a) in enumerate(qa, 1)]
+    return [{"n": i, "question": q, "answer": a, "units": u} for i, (q, a, u) in enumerate(qa, 1)]
 
 
-def chunks(lines):
-    """About BATCH numbered lines per verifier run, contiguous, sizes as even as possible."""
-    if not lines:
-        return []
-    k = -(-len(lines) // BATCH)
-    return ["\n".join(lines[i * len(lines) // k:(i + 1) * len(lines) // k]) for i in range(k)]
+def chunks(lines, units=None):
+    """Contiguous batches of about BATCH units per verifier run; one line may exceed the budget on its own."""
+    out, cur, load = [], [], 0
+    for line, u in zip(lines, units or [1] * len(lines)):
+        if cur and load + u > BATCH:
+            out.append("\n".join(cur))
+            cur, load = [], 0
+        cur.append(line)
+        load += u
+    if cur:
+        out.append("\n".join(cur))
+    return out
+
+
+def cell(x):
+    """A table cell: a pipe inside the text must not end the cell."""
+    return str(x).replace("|", "\\|")
 
 
 def pair_batches(c):
-    return chunks([f"{p['n']}. Question: {p['question']} Answer given: {p['answer']}" for p in c["pairs"]])
+    return chunks([f"{p['n']}. Question: {p['question']} Answer given: {p['answer']}" for p in c["pairs"]],
+                  [p.get("units", 1) for p in c["pairs"]])
 
 
 def claim_batches(c):
@@ -104,7 +117,7 @@ def table(head, rows, verdicts):
     lines = ["| " + " | ".join(head + ["verdict", "correction"]) + " |", "|" + "---|" * (len(head) + 2)]
     for row in rows:
         v = verdicts.get(str(row[0]), {})
-        lines.append("| " + " | ".join(str(x) for x in row) + f" | {v.get('verdict') or 'not parsed'} | {v.get('correction', '')} |")
+        lines.append("| " + " | ".join(cell(x) for x in row) + f" | {v.get('verdict') or 'not parsed'} | {cell(v.get('correction', ''))} |")
     return lines
 
 
@@ -135,7 +148,7 @@ def set_table(c):
     lines = ["| # | id | claim | truth | verdict | passed |", "|---|---|---|---|---|---|"]
     for i, (cid, claim, truth) in enumerate(zip(c["ids"], c["claims"], c["truths"]), 1):
         v = (c["verdicts"].get(str(i)) or {}).get("verdict") or "not parsed"
-        lines.append(f"| {i} | {cid} | {claim} | {'true' if truth else 'false'} | {v} | {'yes' if passed(truth, v) else 'no'} |")
+        lines.append(f"| {i} | {cid} | {cell(claim)} | {'true' if truth else 'false'} | {v} | {'yes' if passed(truth, v) else 'no'} |")
     return lines
 
 
@@ -158,7 +171,7 @@ FLOWS = {
             N(id="decompose", agent="answer", prompt=DECOMPOSE, max_tools=20),
             N(id="split", kind="code", fn=two_lists, inputs=("decompose",)),
             N(id="q", agent="answer", prompt="{item}" + FACTS.SUFFIX, fanout="split.facts", max_tools=20, parse="answer_line"),
-            N(id="m", agent="answer", prompt=MECHANISM, fanout="split.mechanisms", max_tools=30, parse="numbered"),
+            N(id="m", agent="answer", prompt=MECHANISM, fanout="split.mechanisms", max_tools=40, parse="numbered"),
             N(id="pairs", kind="code", fn=pairs, inputs=("split", "q", "m")),
             N(id="batches", kind="code", fn=pair_batches, inputs=("pairs",)),
             N(id="verify", agent="checker", prompt=VERIFY, fanout="batches", skills=False, max_tools=40, parse="verdict_table"),
