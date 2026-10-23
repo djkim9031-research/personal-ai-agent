@@ -2,7 +2,8 @@
 
 A flow names its nodes, which of them hold the answer, the claims table, the verifier's text, and the
 message when there is no answer. Every node runs at thinking effort xhigh until the alternating runs
-settle a lower effort for it; --effort overrides per run. The checker's batches hold about BATCH units,
+settle a lower effort for it; --effort overrides per run. The self flow is the model-driven graph: the
+window's /ask steps followed by the model in one session, then checked by the same claims and verify nodes. The checker's batches hold about BATCH units,
 a fact being one unit and a hop chain as many units as its hops, so a batch of chains stays under the cap.
 """
 from graph import FACTS, NUMBERED
@@ -30,6 +31,13 @@ Question: {question}
 
 Verified facts:
 {facts}"""
+
+SELF = ("Answer the question at the end in four steps and show each step. 1. Write the narrow factual questions behind "
+        "it, 3 to {n}, each answerable by one command or one file. 2. For each question call the task tool with "
+        "subagent_type \"explore\" and that question alone; keep its evidence table. 3. Call the task tool with "
+        "subagent_type \"verify\" with the numbered question and answer pairs and the project directory; show its "
+        "verdict table. 4. Write the answer from the verified pairs only, citing them by number; where the pairs do not "
+        "cover a part of the question, write \"not checked\". Question: {question}")
 
 CLAIMS = ("List every factual claim in your last answer as numbered lines, one claim per line, numbered 1., 2., 3. "
           "and so on, and nothing else: counts, names, acronym expansions, descriptions of components, mechanisms, "
@@ -165,6 +173,16 @@ def set_score(c):
 
 
 N = dict
+BROAD_TAIL = [  # after the answer: its claims, the checker over batches, the rewrite when a claim failed
+    N(id="claims", agent="answer", prompt=CLAIMS, session="answer", max_tools=10, parse="numbered",
+      when=lambda c: bool(c.get("answer")) and c.get("answer_status") in ("done", "reused")),
+    N(id="batches", kind="code", fn=claim_batches, inputs=("claims",)),
+    N(id="verify", agent="checker", prompt=VERIFY, fanout="batches", skills=False, max_tools=40, parse="verdict_table"),
+    N(id="verdicts", kind="code", fn=merged, inputs=("verify",)),
+    N(id="table", kind="code", fn=broad_table, inputs=("claims", "verdicts")),
+    N(id="correct", agent="answer", prompt=CORRECT, session="answer", max_tools=10,
+      when=lambda c: any((r or {}).get("verdict") in ("partly", "wrong") for r in (c.get("verdicts") or {}).values())),
+]
 FLOWS = {
     "narrow": {
         "nodes": [
@@ -184,17 +202,12 @@ FLOWS = {
         "none": "no questions were produced; see steps/decompose.out",
     },
     "broad": {
-        "nodes": [
-            N(id="answer", agent="answer", prompt="{question}", max_tools=80, timeout=1800),  # its rules fan out subagents
-            N(id="claims", agent="answer", prompt=CLAIMS, session="answer", max_tools=10, parse="numbered",
-              when=lambda c: bool(c.get("answer")) and c.get("answer_status") in ("done", "reused")),
-            N(id="batches", kind="code", fn=claim_batches, inputs=("claims",)),
-            N(id="verify", agent="checker", prompt=VERIFY, fanout="batches", skills=False, max_tools=40, parse="verdict_table"),
-            N(id="verdicts", kind="code", fn=merged, inputs=("verify",)),
-            N(id="table", kind="code", fn=broad_table, inputs=("claims", "verdicts")),
-            N(id="correct", agent="answer", prompt=CORRECT, session="answer", max_tools=10,
-              when=lambda c: any((r or {}).get("verdict") in ("partly", "wrong") for r in (c.get("verdicts") or {}).values())),
-        ],
+        "nodes": [N(id="answer", agent="answer", prompt="{question}", max_tools=80, timeout=1800)] + BROAD_TAIL,
+        "answer": ("correct", "answer"), "table": "table", "verify": "verify", "verdicts": None,
+        "none": "no answer; see steps/answer.out",
+    },
+    "self": {  # the model-driven graph: the window's /ask steps followed by the model itself, checked like broad
+        "nodes": [N(id="answer", agent="answer", prompt=SELF, max_tools=80, timeout=1800)] + BROAD_TAIL,
         "answer": ("correct", "answer"), "table": "table", "verify": "verify", "verdicts": None,
         "none": "no answer; see steps/answer.out",
     },
