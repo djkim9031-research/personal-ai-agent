@@ -17,8 +17,10 @@ python3 "$here/fake-model.py" --port 8099 --replies "$here/ask-fake-replies.json
 fake=$!
 python3 "$here/fake-model.py" --port 8098 --replies "$here/probe-fake-replies.json" --log "$out/probe-requests.jsonl" &
 fake2=$!
-trap 'kill $fake $fake2 2>/dev/null' EXIT
-for port in 8099 8098; do
+python3 "$here/fake-model.py" --port 8097 --replies "$here/ask-fake-replies.json" --log "$out/stopped-requests.jsonl" --delay $delay &
+fake3=$!
+trap 'kill $fake $fake2 $fake3 2>/dev/null' EXIT
+for port in 8099 8098 8097; do
     for i in 1 2 3 4 5 6 7 8 9 10; do
         python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1)" 2>/dev/null && break
         sleep 1
@@ -45,6 +47,14 @@ echo; echo "== narrow resumed after deleting the compose record"
 rm "$out/narrow/steps/compose.json"
 ask --effort q=medium --resume "$out/narrow" "$q"
 n5=$(count)
+echo; echo "== a stopped runner stops its runs"
+python3 "$here/ask.py" --project "$out/project" --server http://127.0.0.1:8097 --scope check --out "$out/stopped" "$q" &
+runner=$!
+sleep 7
+kill -TERM $runner
+wait $runner || true
+sleep 2
+pgrep -f "opencode run --dir $out/project" > "$out/stopped-left.txt" || true
 echo; echo "== probe"
 python3 "$here/probe.py" --selftest
 python3 "$here/probe.py" --questions "$here/repo-facts.example.json" --out "$out/probe" --samples 2 --lanes 2 \
@@ -101,6 +111,8 @@ check(n3 - n2 == 4, f"broad made {n3 - n2} requests, expected 4")
 check(n4 - n3 == 4, f"broad --no-skills made {n4 - n3} requests, expected 4")
 check(n5 - n4 == 1, f"the resumed narrow run made {n5 - n4} requests, expected 1")
 check(n6 - n5 == 4, f"repo-facts made {n6 - n5} requests, expected 4")
+check(not open(f"{out}/stopped-left.txt").read().strip(), "a stopped runner left opencode runs behind")
+check(len(lines(f"{out}/stopped-requests.jsonl")) >= 1, "the stopped runner was stopped before it ran anything")
 # verdicts, node counts, concurrency
 s, ss = load(f"{out}/narrow-summary-first.json"), load(f"{out}/narrow-serial/summary.json")
 check(s["verdicts"] == {"correct": 5, "partly": 2}, f"narrow verdicts {s['verdicts']}")
@@ -225,6 +237,7 @@ check(all(n in dry for n in ("decompose", "split", "q:", "m:", "verify", "compos
 print("\n".join(bad) if bad else
       f"checks passed: {n6} requests; concurrency {s['seconds']} s of runs in {s['wall']} s wall against {ss['wall']} s on one "
       f"lane; resume reran 1 run; efforts in every body; no ask for a headless agent; {checker} checker requests without a "
-      f"skill; 2 verify batches merged; {len(traj)} trajectory lines; probe 4 declined and 4 wrong-confident")
+      f"skill; 2 verify batches merged; {len(traj)} trajectory lines; probe 4 declined and 4 wrong-confident; "
+      f"a stopped runner left no run behind")
 sys.exit(1 if bad else 0)
 PY

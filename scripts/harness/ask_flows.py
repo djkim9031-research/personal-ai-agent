@@ -185,9 +185,9 @@ FLOWS = {
     },
     "broad": {
         "nodes": [
-            N(id="answer", agent="answer", prompt="{question}", max_tools=80),
+            N(id="answer", agent="answer", prompt="{question}", max_tools=80, timeout=1800),  # its rules fan out subagents
             N(id="claims", agent="answer", prompt=CLAIMS, session="answer", max_tools=10, parse="numbered",
-              when=lambda c: bool(c.get("answer"))),
+              when=lambda c: bool(c.get("answer")) and c.get("answer_status") in ("done", "reused")),
             N(id="batches", kind="code", fn=claim_batches, inputs=("claims",)),
             N(id="verify", agent="checker", prompt=VERIFY, fanout="batches", skills=False, max_tools=40, parse="verdict_table"),
             N(id="verdicts", kind="code", fn=merged, inputs=("verify",)),

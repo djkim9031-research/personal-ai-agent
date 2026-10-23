@@ -50,6 +50,9 @@ def say(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
+BUDGETS = ("max_tools", "timeout")  # left out of a node's hash: a finished node is the same under a larger budget
+
+
 def sha(obj):
     """A short hash of any value; functions hash by their source."""
     text = json.dumps(obj, sort_keys=True, default=lambda o: inspect.getsource(o) if callable(o) else str(o))
@@ -104,6 +107,9 @@ def table_rows(text):
         if not line.strip().startswith("|"):
             continue
         cells = cells_of(line)
+        m = re.match(r"(\d+)\.?(?:\s+(.+))?$", cells[0]) if cells else None
+        if m:  # the number may share its cell with the claim, or carry a dot
+            cells = [m.group(1)] + ([m.group(2)] if m.group(2) else []) + cells[1:]
         if len(cells) < 3 or not cells[0].isdigit():
             continue
         verdict = verdict_of(cells[2]) or next((verdict_of(c) for c in cells[1:] if verdict_of(c)), "unparsed")
@@ -315,6 +321,15 @@ def run_flow(name, flow, ctx, a):
            False: settings(os.path.join(out, "opencode.noskills.json"), a.server, ("skills",))}
     lanes = Lanes(os.path.join(out, "xdg"), a.concurrency)
     results, procs, lock = {}, set(), threading.Lock()
+
+    def interrupt(*_):
+        """A SIGTERM to the runner stops the live runs first, then behaves like Ctrl-C."""
+        for p in list(procs):
+            kill(p, signal.SIGTERM)
+        raise KeyboardInterrupt
+
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, interrupt)
     state = {"dirty": False, "alone": True}
 
     def save(r):
@@ -340,16 +355,18 @@ def run_flow(name, flow, ctx, a):
         if node["fanout"] is not None:
             ctx[node["id"]] = [r["value"] for r in recs]
             ctx[node["id"] + "_text"] = "\n\n".join(r["text"] for r in recs)
+            ctx[node["id"] + "_status"] = [r["status"] for r in recs]
         elif recs:
             ctx[node["id"]], ctx[node["id"] + "_text"] = recs[0]["value"], recs[0]["text"]
+            ctx[node["id"] + "_status"] = recs[0]["status"]
         else:
-            ctx[node["id"]], ctx[node["id"] + "_text"] = None, ""
+            ctx[node["id"]], ctx[node["id"] + "_text"], ctx[node["id"] + "_status"] = None, "", None
 
     try:
         for spec in flow["nodes"]:
             node = full(spec, a)
             nid = node["id"]
-            spec_hash = sha({**node, "project": a.project})
+            spec_hash = sha({**{k: v for k, v in node.items() if k not in BUDGETS}, "project": a.project})
             if node["when"] and not node["when"](ctx):
                 r = {"id": nid, "node": nid, "kind": node["kind"], "status": "skipped", "exit": None, "seconds": 0.0,
                      "tools": 0, "errors": 0, "rejected": 0, "session": None, "lane": None, "tokens": zero(), "text": "",
