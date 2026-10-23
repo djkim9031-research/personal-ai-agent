@@ -6,7 +6,9 @@ samples each, in two arms: with the working rules as the system message, and bar
 scored with the answer key and classed: no-answer-line, declined (the answer line says unknown or
 not determinable), correct, or wrong-confident (a definite answer that scores wrong). A private
 repository leaves the weights nothing to recall, so correct samples are general knowledge or luck,
-and the wrong-confident rate is what the harness's verifier has to catch. Standard library only.
+and the wrong-confident rate is what the harness's verifier has to catch. An empty reply, the generation
+complete with nothing after the thinking, is counted apart: under the working rules the model writes a
+tool call, which the server drops when no tool was offered. Standard library only.
 
 Usage: probe.py --questions FILE --out DIR [--samples 5] [--effort xhigh|medium|low|none] [--arms rules,bare]
                 [--rules config/opencode/AGENTS.md] [--lanes 4] [--max-tokens 8192] [--temperature T]
@@ -70,6 +72,11 @@ def classify(q, content, finish):
     return "wrong-confident", answer
 
 
+def empty_reply(content, finish):
+    """A complete generation with nothing after the thinking: a tool call the server dropped, no tool being offered."""
+    return finish == "stop" and not content.strip()
+
+
 def body_for(a, q, arm, sample, rules):
     msgs = [{"role": "system", "content": rules}] if arm == "rules" else []
     msgs.append({"role": "user", "content": q["question"].strip() + FACTS.SUFFIX})
@@ -104,6 +111,7 @@ def run_one(a, q, arm, sample, rules):
     return {"id": q["id"], "type": q.get("type", "contains"), "arm": arm, "sample": sample, "class": cls,
             "score": scored(q, answer), "answer": answer, "expected": q["answer"], "hedged": bool(HEDGE_RE.search(answer)),
             "knew_no_evidence": bool(KNEW_RE.search(r["reasoning"] + "\n" + r["content"])), "finish_reason": r["finish"],
+            "empty_reply": empty_reply(r["content"], r["finish"]),
             "prompt_tokens": r.get("prompt_tokens"), "completion_tokens": r.get("completion_tokens"),
             "reasoning_tokens": r.get("reasoning_tokens"), "content_chars": len(r["content"]), "seconds": r["seconds"],
             "seed": sample, "content": r["content"], "reasoning": r["reasoning"], "error": r.get("error")}
@@ -116,6 +124,7 @@ def arm_summary(rows):
             **{k + "_rate": (round(sum(r["class"] == k for r in rows) / n, 3) if n else None) for k in CLASSES},
             "hedged": sum(r["hedged"] for r in rows), "knew_no_evidence": sum(r["knew_no_evidence"] for r in rows),
             "length_capped": sum(r["finish_reason"] == "length" for r in rows),
+            "empty_replies": sum(r["empty_reply"] for r in rows),
             "errors": sum(1 for r in rows if r.get("error")),
             "median_reasoning_tokens": statistics.median(rt) if rt else None, "total_reasoning_tokens": sum(rt),
             "median_seconds": round(statistics.median(r["seconds"] for r in rows), 1) if rows else None}
@@ -156,6 +165,10 @@ def selftest():
         got = classify(q, text, finish)[0]
         ok &= got == want
         print(f"{'ok ' if got == want else 'BAD'} {text[-40:]!r} -> {got}")
+    for text, finish, want in (("", "stop", True), ("  \n", "stop", True), ("ANSWER: 131", "stop", False), ("", "length", False)):
+        got = empty_reply(text, finish)
+        ok &= got == want
+        print(f"{'ok ' if got == want else 'BAD'} empty_reply({text!r}, {finish}) -> {got}")
     print("selftest " + ("passed" if ok else "FAILED"))
     return 0 if ok else 1
 
@@ -225,13 +238,14 @@ def main():
                "per_question": questions_out, "questions_with_confident_wrong_majority": majority_wrong,
                "memory_candidates": memory}
     json.dump(summary, open(os.path.join(out, "summary.json"), "w"), indent=1)
-    print("\n| Arm | Effort | Samples | Correct | Declined | Wrong, confident | No answer line | "
+    print("\n| Arm | Effort | Samples | Correct | Declined | Wrong, confident | No answer line | Of which empty replies | "
           "Questions with a confident-wrong majority | Thinking tokens per sample (median) | Seconds per sample (median) |")
-    print("|---|---|---|---|---|---|---|---|---|---|")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
     for arm in arms:
         s = summary["arms"][arm]
         print(f"| {arm} | {a.effort} | {s['samples']} | {s['correct']} | {s['declined']} | {s['wrong-confident']} | "
-              f"{s['no-answer-line']} | {len(majority_wrong[arm])} of {len(questions)} | {s['median_reasoning_tokens']} | "
+              f"{s['no-answer-line']} | {s['empty_replies']} | {len(majority_wrong[arm])} of {len(questions)} | "
+              f"{s['median_reasoning_tokens']} | "
               f"{s['median_seconds']} |")
     print(f"\nmemory candidates (correct in every arm): {', '.join(memory) or 'none'}; results under {out}")
     return 0
