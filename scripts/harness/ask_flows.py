@@ -1,8 +1,9 @@
 """The flows of ask.py as data: lists of nodes for graph.py, in run order.
 
 A flow names its nodes, which of them hold the answer, the claims table, the verifier's text, and the
-message when there is no answer. Every node runs at thinking effort xhigh until the alternating runs
-settle a lower effort for it; --effort overrides per run. The self flow is the model-driven graph: the
+message when there is no answer. Every node runs at thinking effort xhigh: the alternating runs of
+2026-10-23 kept it for the question and verify nodes, where medium dropped answer lines or saved no
+time; --effort overrides per run. The self flow is the model-driven graph: the
 window's /ask steps followed by the model in one session, then checked by the same claims and verify nodes. The checker's batches hold about BATCH units,
 a fact being one unit and a hop chain as many units as its hops, so a batch of chains stays under the cap.
 """
