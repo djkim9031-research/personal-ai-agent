@@ -1,10 +1,11 @@
 #!/bin/sh
 # Runs ask.py against the stand-in model server on a scratch project, so the graph, the parsing and
 # the reports can be checked without the GPU: narrow mode with four lanes and with one, broad mode,
-# broad mode with --no-skills, a resumed narrow run, the probe, and the repo-facts effort variant.
-# Then checks the recorded requests and the run folders: concurrency, resume, the effort field in
-# every request, no permission that asks for a headless agent, the verifier never sees a skill,
-# batching, the trajectory lines. Usage: ask-check.sh [OUT]
+# broad mode with --no-skills, a resumed narrow run, /custom-graph through the window's command and
+# stopped from the window, the probe, and the repo-facts effort variant. Then checks the recorded
+# requests and the run folders: concurrency, resume, the effort field in every request, no permission
+# that asks for a headless agent, the verifier never sees a skill, batching, the trajectory lines, the
+# graph tool offered only to its agent and given the question as typed. Usage: ask-check.sh [OUT]
 set -eu
 here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 repo=$(cd "$here/../.." && pwd)
@@ -19,8 +20,10 @@ python3 "$here/fake-model.py" --port 8098 --replies "$here/probe-fake-replies.js
 fake2=$!
 python3 "$here/fake-model.py" --port 8097 --replies "$here/ask-fake-replies.json" --log "$out/stopped-requests.jsonl" --delay $delay &
 fake3=$!
-trap 'kill $fake $fake2 $fake3 2>/dev/null' EXIT
-for port in 8099 8098 8097; do
+python3 "$here/fake-model.py" --port 8096 --replies "$here/ask-fake-replies.json" --log "$out/window-requests.jsonl" --delay $delay &
+fake4=$!
+trap 'kill $fake $fake2 $fake3 $fake4 ${server:-} 2>/dev/null || true' EXIT
+for port in 8099 8098 8097 8096; do
     for i in 1 2 3 4 5 6 7 8 9 10; do
         python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1)" 2>/dev/null && break
         sleep 1
@@ -55,6 +58,55 @@ kill -TERM $runner
 wait $runner || true
 sleep 2
 pgrep -f "opencode run --dir $out/project" > "$out/stopped-left.txt" || true
+echo; echo "== /custom-graph through the window's command"
+# A window home like the owner's: the plugin package seeded, the tool linked as install-opencode.sh does.
+cg="$out/custom-graph"
+seed="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+mkdir -p "$cg/home/config/opencode/tools" "$cg/home/data" "$cg/home/cache" "$cg/home/state"
+cp -R "$seed/node_modules" "$seed/package.json" "$seed/package-lock.json" "$cg/home/config/opencode/"
+ln -s "$repo/config/opencode/tools/custom_graph.ts" "$cg/home/config/opencode/tools/custom_graph.ts"
+python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import graph; graph.settings(sys.argv[2], sys.argv[3])' \
+    "$here" "$cg/opencode.json" http://127.0.0.1:8096
+window() {
+    exec env -C "$out/project" XDG_CONFIG_HOME="$cg/home/config" XDG_DATA_HOME="$cg/home/data" \
+        XDG_CACHE_HOME="$cg/home/cache" XDG_STATE_HOME="$cg/home/state" OPENCODE_CONFIG="$cg/opencode.json" \
+        AGENT_NO_NOTES=1 AGENT_ASK_DIR="$cg/ask" AGENT_ASK_SCOPE=check "$here/opencode.sh" "$@"
+}
+# Passed word by word: opencode run quotes an argument that holds a space, the window does not.
+cq='How does the "cli" count `unique` words, $(touch PWNED) and $1?'
+set -f
+(window run --dir "$out/project" --title custom-graph --format json --command custom-graph $cq) < /dev/null > "$cg/run.jsonl"
+set +f
+first=$(readlink "$cg/ask/latest")
+echo; echo "== /custom-graph stopped from the window"
+(window serve --port 8095 --hostname 127.0.0.1) < /dev/null > "$cg/serve.log" 2>&1 &
+server=$!
+for i in $(seq 1 30); do
+    python3 -c "import socket; socket.create_connection(('127.0.0.1', 8095), 1)" 2>/dev/null && break
+    sleep 1
+done
+api=http://127.0.0.1:8095/session
+sid=$(curl -s -X POST "$api" -H 'Content-Type: application/json' -d '{"title": "custom-graph stopped"}' |
+      python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
+curl -s -X POST "$api/$sid/command" -H 'Content-Type: application/json' \
+    -d '{"command": "custom-graph", "arguments": "What does this project do and how is it tested?"}' > "$cg/stop-command.json" &
+command=$!
+now=$first
+for i in $(seq 1 60); do
+    now=$(readlink "$cg/ask/latest" || true)
+    [ "$now" != "$first" ] && grep -q '^\[decompose\]' "$now/progress.log" 2>/dev/null && break
+    sleep 1
+done
+echo "$now" > "$cg/stopped-run.txt"
+curl -s -X POST "$api/$sid/abort" > /dev/null
+wait $command || true
+for i in $(seq 1 20); do
+    { pgrep -f "ask.py --project $out/project" || true; pgrep -f "opencode run --dir $out/project" || true; } > "$cg/stop-left.txt"
+    [ -s "$cg/stop-left.txt" ] || break
+    sleep 1
+done
+kill $server
+wait $server 2>/dev/null || true
 echo; echo "== probe"
 python3 "$here/probe.py" --selftest
 python3 "$here/probe.py" --questions "$here/repo-facts.example.json" --out "$out/probe" --samples 2 --lanes 2 \
@@ -68,11 +120,12 @@ n6=$(count)
 echo
 echo "requests to the stand-in: $n6; runs under $out"
 python3 - "$out" "$delay" "$n1" "$n2" "$n3" "$n4" "$n5" "$n6" "${OPENCODE_CONFIG:-$repo/config/opencode/opencode.json}" \
-    "$repo/config/opencode/AGENTS.md" <<'PY'
-import glob, json, os, sys
+    "$repo/config/opencode/AGENTS.md" "$cg" "$cq" "$repo" <<'PY'
+import glob, json, os, subprocess, sys
 out, delay = sys.argv[1], float(sys.argv[2])
 n1, n2, n3, n4, n5, n6 = (int(x) for x in sys.argv[3:9])
 config, rules_path = sys.argv[9], sys.argv[10]
+cg, cq, repo = sys.argv[11], sys.argv[12], sys.argv[13]
 CLASSES = ("correct", "declined", "wrong-confident", "no-answer-line")
 QKEYS = {"test methods", "functions", "--json", "project name", "say to run"}
 TRAJ_KEYS = {"schema", "run", "run_id", "flow", "node", "kind", "agent", "variant", "scope", "model", "session", "project",
@@ -230,6 +283,40 @@ for r in preqs:
         with_system += 1
         check(systems == [rules_text], "the rules arm's system message is not the rules file")
 check(with_system == 4, f"{with_system} probe requests carried a system message, expected 4")
+# /custom-graph: the tool offered to its agent alone, the question as typed, the reply the tool's output
+def offered(r):
+    return [t.get("function", {}).get("name") for t in r["body"].get("tools") or []]
+wreqs = lines(f"{out}/window-requests.jsonl")
+graph_reqs = [r for r in wreqs if "custom_graph" in offered(r)]
+check(len(graph_reqs) == 3 and all(offered(r) == ["custom_graph"] for r in graph_reqs),
+      f"{len(graph_reqs)} requests offered the graph tool, expected 3, each with no other tool")
+check(sum(r["matched"] == "tool result" for r in wreqs) == 1, "the graph agent did not reply once after the tool")
+runs = {load(p)["question"]: os.path.dirname(p) for p in glob.glob(f"{cg}/ask/*/graph.json")}
+run = runs.get(cq)
+check(run is not None, f"no run of the question as typed; runs of {sorted(runs)}")
+check(not any(os.path.exists(os.path.join(d, "PWNED")) for d in (f"{out}/project", cg, os.getcwd())),
+      "a shell ran part of the question")
+if run:
+    events = [json.loads(l) for l in open(f"{cg}/run.jsonl") if l.startswith("{")]
+    outputs = [e["part"]["state"].get("output") or "" for e in events
+               if e.get("type") == "tool_use" and e["part"].get("tool") == "custom_graph"]
+    texts = [e["part"].get("text") or "" for e in events if e.get("type") == "text"]
+    rtext = open(f"{run}/report.md").read()
+    answer = rtext.split("## Answer\n\n", 1)[1].split("\n\n## ", 1)[0].strip()
+    check(len(outputs) == 1 and outputs[0].startswith(answer) and "| 7 |" in outputs[0]
+          and outputs[0].endswith(f"report: {run}/report.md"), "the tool output is not the answer, claims and report path")
+    check(bool(texts) and len(outputs) == 1 and texts[-1].strip() == outputs[0].strip(), "the reply is not the tool output")
+    own = subprocess.run(["python3", "-I", f"{repo}/scripts/opencode-memory/agent-notes.py", "scope", f"{out}/project"],
+                         capture_output=True, text=True).stdout.strip()
+    head = open(f"{run}/progress.log").readline()
+    check(head.startswith(f"custom graph from the window: scope check (the project's scope: {own})"),
+          f"progress.log starts {head!r}")
+stopped = open(f"{cg}/stopped-run.txt").read().strip()
+check(bool(stopped) and stopped != run and os.path.isfile(f"{stopped}/progress.log"), "the stopped run did not start")
+check(not open(f"{cg}/stop-left.txt").read().strip(), "a stopped /custom-graph left ask.py or opencode runs behind")
+if os.path.isfile(f"{stopped}/progress.log"):
+    check(open(f"{stopped}/progress.log").read().rstrip().endswith("stopped"), "the stopped ask.py did not end cleanly")
+check("MessageAbortedError" in open(f"{cg}/stop-command.json").read(), "the stopped command did not end as aborted")
 # dry run
 dry = open(f"{out}/dry-run.txt").read()
 check(all(n in dry for n in ("decompose", "split", "q:", "m:", "verify", "compose")) and "effort xhigh" in dry
@@ -238,6 +325,7 @@ print("\n".join(bad) if bad else
       f"checks passed: {n6} requests; concurrency {s['seconds']} s of runs in {s['wall']} s wall against {ss['wall']} s on one "
       f"lane; resume reran 1 run; efforts in every body; no ask for a headless agent; {checker} checker requests without a "
       f"skill; 2 verify batches merged; {len(traj)} trajectory lines; probe 4 declined and 4 wrong-confident; "
-      f"a stopped runner left no run behind")
+      f"a stopped runner left no run behind; /custom-graph: the tool offered to its agent alone, the question as "
+      f"typed, the reply the tool's output, stopped from the window with nothing left running")
 sys.exit(1 if bad else 0)
 PY

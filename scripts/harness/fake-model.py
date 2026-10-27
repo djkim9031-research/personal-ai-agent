@@ -9,6 +9,9 @@ concurrency measurable. Standard library only.
 
 Usage: fake-model.py --port 8099 --replies FILE.json [--log FILE.jsonl] [--delay 0]
 Replies file: {"a phrase from the prompt": "the reply", ..., "default": "the reply otherwise"}
+A reply may be {"tool": NAME, "arguments": {...}} instead: a call of that tool when the request offers
+it, the default reply otherwise. After a tool result the reply repeats the result, as the agent of
+/custom-graph is told to.
 """
 import argparse
 import json
@@ -18,13 +21,16 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+def content_text(c):
+    if isinstance(c, list):
+        return " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+    return c or ""
+
+
 def last_user_text(body):
     for m in reversed(body.get("messages", [])):
         if m.get("role") == "user":
-            c = m.get("content")
-            if isinstance(c, list):
-                return " ".join(p.get("text", "") for p in c if isinstance(p, dict))
-            return c or ""
+            return content_text(m.get("content"))
     return ""
 
 
@@ -49,8 +55,19 @@ class Handler(BaseHTTPRequestHandler):
         t_start = time.time()
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         text = last_user_text(body)
-        key = next((k for k in self.replies if k != "default" and k in text), "default")
-        reply = self.replies.get(key, "ok")
+        messages = body.get("messages") or [{}]
+        call = None
+        if messages[-1].get("role") == "tool":
+            key, reply = "tool result", content_text(messages[-1].get("content"))
+        else:
+            key = next((k for k in self.replies if k != "default" and k in text), "default")
+            reply = self.replies.get(key, "ok")
+        if isinstance(reply, dict):
+            offered = {t.get("function", {}).get("name") for t in body.get("tools") or []}
+            if reply.get("tool") in offered:
+                call = {"id": "call_1", "type": "function",
+                        "function": {"name": reply["tool"], "arguments": json.dumps(reply.get("arguments", {}))}}
+            reply = "" if call else self.replies.get("default", "ok")
         if self.delay:
             time.sleep(self.delay)
         if self.log:
@@ -59,12 +76,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.log.write(json.dumps({"n": Handler.count, "path": self.path, "matched": key, "t_start": t_start,
                                            "t_end": time.time(), "body": body}) + "\n")
                 self.log.flush()
-        usage = {"prompt_tokens": len(text) // 4, "completion_tokens": len(reply) // 4,
-                 "total_tokens": len(text) // 4 + len(reply) // 4}
+        out = len(json.dumps(call)) // 4 if call else len(reply) // 4
+        usage = {"prompt_tokens": len(text) // 4, "completion_tokens": out, "total_tokens": len(text) // 4 + out}
+        finish = "tool_calls" if call else "stop"
         if not body.get("stream"):
+            message = {"role": "assistant", "content": None, "tool_calls": [call]} if call else \
+                {"role": "assistant", "content": reply}
             self.send_json({"id": "fake", "object": "chat.completion", "created": 0, "model": "local-primary",
-                            "choices": [{"index": 0, "message": {"role": "assistant", "content": reply},
-                                         "finish_reason": "stop"}], "usage": usage})
+                            "choices": [{"index": 0, "message": message, "finish_reason": finish}], "usage": usage})
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -77,8 +96,11 @@ class Handler(BaseHTTPRequestHandler):
                 d["usage"] = usage
             self.wfile.write(("data: " + json.dumps(d) + "\n\n").encode())
 
-        chunk({"role": "assistant", "content": reply})
-        chunk({}, "stop", True)
+        if call:
+            chunk({"role": "assistant", "tool_calls": [{"index": 0, **call}]})
+        else:
+            chunk({"role": "assistant", "content": reply})
+        chunk({}, finish, True)
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 

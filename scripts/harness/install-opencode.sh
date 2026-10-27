@@ -36,5 +36,8 @@ if [ ! -d "$cfg/node_modules/@opencode-ai/plugin" ]; then
     [ -f "$cfg/package.json" ] || printf '{\n  "name": "opencode-config",\n  "private": true\n}\n' > "$cfg/package.json"
     (cd "$cfg" && npm install --ignore-scripts --no-audit --no-fund --save-exact "@opencode-ai/plugin@$OPENCODE_VERSION" > /dev/null)
 fi
+# The /custom-graph tool, for the window only: the graph's headless runs use private homes without it.
+mkdir -p "$cfg/tools"
+ln -sfn "$repo/config/opencode/tools/custom_graph.ts" "$cfg/tools/custom_graph.ts"
 ln -sfn "$repo/scripts/harness/opencode.sh" "$HOME/.local/bin/opencode"
-echo "opencode $OPENCODE_VERSION in $dir; ~/.local/bin/opencode -> scripts/harness/opencode.sh; config folder $cfg seeded"
+echo "opencode $OPENCODE_VERSION in $dir; ~/.local/bin/opencode -> scripts/harness/opencode.sh; config folder $cfg seeded; /custom-graph tool linked"

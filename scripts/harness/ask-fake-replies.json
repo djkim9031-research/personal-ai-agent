@@ -1,4 +1,5 @@
 {
+ "Answer the question between the markers with the custom_graph tool": {"tool": "custom_graph", "arguments": {"question": "a shortened copy"}},
  "Do not answer the question below yet": "Facts\n1. How many functions are defined in textstats/count.py?\n2. How many test methods are defined in tests/test_count.py?\n3. Does README.md mention a --json flag?\n4. What is the project name in pyproject.toml?\n5. Which module does README.md say to run?\n\nMechanisms\n1. How does the command line print its counts?\n2. How is a unique word counted?",
  "from the verified facts": "The project counts words and characters with three functions [1]. It is tested by four test methods [2]. The README does not mention a --json flag [3]. The project is named textstats [4] and is run as a module [5]. The command line reads the file and prints three counts [6]. Unique words are counted with a set, case-sensitively [7]. How the tests are run is not checked.",
  "List every factual claim": "1. textstats/count.py defines three functions\n2. tests/test_count.py defines three test methods\n3. README.md does not mention a --json flag",

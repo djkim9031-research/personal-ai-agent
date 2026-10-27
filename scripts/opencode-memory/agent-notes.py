@@ -2,6 +2,7 @@
 """Notes and past sessions for the coding agent (opencode), one notes file per project.
 
   agent-notes path [DIR]            notes file of DIR's project (made if missing); the launcher loads it
+  agent-notes scope [DIR]           work or personal, by the rule below; read-only
   agent-notes profile               the owner's profile from the email assistant, for the launcher
   agent-notes show [DIR]            the project's notes
   agent-notes add "TEXT"            one new entry (opencode asks the owner before running it)
@@ -148,6 +149,10 @@ def cmd_path(args):
     if not proj["notes"].exists():
         write_notes(proj, [], "start notes")
     print(proj["notes"])
+
+
+def cmd_scope(args):
+    print(project(args[0] if args else ".")["scope"])
 
 
 def cmd_profile(_):
@@ -417,7 +422,7 @@ def main():
         if len(args) < need:
             sys.exit(__doc__)
         return cmd_change(cmd, args)
-    handlers = {"path": cmd_path, "profile": cmd_profile, "show": cmd_show, "undo": cmd_undo,
+    handlers = {"path": cmd_path, "scope": cmd_scope, "profile": cmd_profile, "show": cmd_show, "undo": cmd_undo,
                 "recall": cmd_recall, "pending": cmd_pending, "review": cmd_review, "dream": cmd_dream}
     if cmd not in handlers:
         sys.exit(__doc__)
