@@ -1,0 +1,19 @@
+# The weekly backup check (increment 11): a backup, then old snapshots
+# thinned and part of the data read back. Root-owned copy, no network.
+[Unit]
+Description=Agent backup, thinning of old snapshots and a check of 10% of the data
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/agent-backup.env
+Environment=RESTIC_CACHE_DIR=/var/cache/agent-backup
+CacheDirectory=agent-backup
+ExecStart=/usr/local/libexec/agent-backup/agent-backup.sh check
+Nice=10
+IOSchedulingClass=idle
+PrivateNetwork=yes
+ProtectSystem=strict
+ReadWritePaths=/var/backups/agent-restic
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes

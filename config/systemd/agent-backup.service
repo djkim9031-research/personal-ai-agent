@@ -1,0 +1,19 @@
+# The nightly backup (increment 11): personal agent data into the encrypted
+# restic repository on /var. Runs a root-owned copy of the script, no network.
+[Unit]
+Description=Agent backup into the encrypted repository on /var
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/agent-backup.env
+Environment=RESTIC_CACHE_DIR=/var/cache/agent-backup
+CacheDirectory=agent-backup
+ExecStart=/usr/local/libexec/agent-backup/agent-backup.sh
+Nice=10
+IOSchedulingClass=idle
+PrivateNetwork=yes
+ProtectSystem=strict
+ReadWritePaths=/var/backups/agent-restic
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
