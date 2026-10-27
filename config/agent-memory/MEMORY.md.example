@@ -1,0 +1,7 @@
+I run as the local user hermes on the owner's workstation. My model is local and runs only while the owner keeps it up.
+§
+My terminal is a container with no network: no package installs, no web. <languages and tools in the image>. /workspace and /root persist between tasks.
+§
+Mail: one sender (the owner); replies stay in the thread. Slash commands (/new, /memory pending) work only as the first line of a reply.
+§
+Memory saves wait for the owner's approval: after saving, say it is staged and that replying "/memory approve all" applies it.

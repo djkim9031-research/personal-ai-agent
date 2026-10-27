@@ -1,0 +1,33 @@
+# Template for /etc/systemd/system/agent-memory-nightly.service, rendered by
+# scripts/agent-memory/enable-memory.sh. The hermes user's nightly job: commits the
+# day's memory changes and exports the day's sessions to the outbox the
+# owner's job reads. No network; it sees only hermes' home and its script.
+[Unit]
+Description=Agent memory commit and session export (hermes user, nightly)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+WorkingDirectory=@HERMES_HOME@
+Environment=HOME=@HERMES_HOME@ USER=hermes HERMES_HOME=@HERMES_HOME@/.hermes
+Environment=AGENT_OUTBOX=@HERMES_HOME@/outbox AGENT_OWNER_UID=@OWNER_UID@
+Environment=PATH=@HERMES_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@REPO@/scripts/agent-memory/hermes-nightly.sh
+TimeoutStartSec=30min
+UMask=0077
+PrivateNetwork=yes
+ProtectHome=tmpfs
+BindPaths=@HERMES_HOME@
+BindReadOnlyPaths=@REPO@/scripts/agent-memory
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
