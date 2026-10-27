@@ -60,7 +60,7 @@ opencode 1.19.3 reads, searches and edits the files of the folder you start it i
 
     scripts/harness/install-opencode.sh
 
-It downloads the pinned release, checks its hash, and links `~/.local/bin/opencode`. If `opencode` is not found afterwards, add `~/.local/bin` to your `PATH`.
+It downloads the pinned release, checks its hash, links `~/.local/bin/opencode`, and links the tool of `/custom-graph` (below) into `~/.config/opencode/tools/`. If `opencode` is not found afterwards, add `~/.local/bin` to your `PATH`. Run it again after an update of this repository; it downloads nothing when the release is already there.
 
 **Use** (the model server must be running):
 
@@ -72,6 +72,7 @@ It downloads the pinned release, checks its hash, and links `~/.local/bin/openco
 - Type a request in the window, for example `Find where the settings file is read and list the functions it passes through.`
 - The **plan** agent only reads; the **build** agent may edit files and run commands. The Tab key switches between them. Reading or editing a file outside the project folder asks for your permission first.
 - `/verify` checks the factual claims of the last answer against the files. `/ask your question` answers in steps: narrow questions, one helper session each, every answer checked.
+- `/custom-graph your question` runs the question through the step-by-step runner below (`ask.py`, not the model following steps by itself as in `/ask`) and shows its checked answer, the claims table and the report path in the window. It takes 6 to 30 minutes; follow it with `tail -f ~/agent-data/ask/latest/progress.log`; Esc twice stops it. The runner sees only the question and the files, not the conversation, so write the question so it stands on its own. Your next message goes to the plan or build agent as usual and can ask about the answer.
 - For one task without the window: `opencode run "your request"`.
 
 What the launcher sets for every session: the model is the local server only; sharing and the update check are off; web fetch and web search are denied; skills of other tools in your home folder are ignored; every session reads the working rules in `config/opencode/AGENTS.md` (numbers only from commands, sources named, guesses marked as guesses).

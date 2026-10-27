@@ -21,6 +21,8 @@ Skills are read from `~/agent-data/work/skills/`, outside the repository. `skill
 - `--no-skills` leaves the skills out, so a fact sheet cannot stand in for the repository when the model's own reading is what is measured; the verifier agents never see the skills.
 - `--effort node=variant,...` sets the thinking effort per node (`low`, `medium`, `xhigh`, `off`); `--resume DIR` reruns only the nodes whose spec or inputs changed (a raised tool cap or timeout reruns only the nodes it stopped); `--dry-run` prints the graph.
 
+`/custom-graph question` runs the narrow mode from the window, on the window's project. The command puts the text between `<question>` markers and hands it to the hidden `graph` agent (`prompts/graph.md`), whose only tool is `custom_graph` (`config/opencode/tools/custom_graph.ts`). `install-opencode.sh` links the tool into `~/.config/opencode/tools/`; the runner's own headless runs use private opencode homes without it, and the settings deny it to every other agent, so they are never offered it. The tool takes the question from the owner's message, not from the model's copy of it, picks work or personal with `agent-notes scope` (the notes' rule), runs `ask.py --project <session folder> --scope <scope> --out ~/agent-data/ask/<time>`, and returns what it prints: the answer, the claims table and the report path, which the agent repeats as its reply. opencode 1.19.3 drops a custom tool's progress updates, so the runner's progress goes to `progress.log` in the run folder, linked as `~/agent-data/ask/latest`; Esc sends the runner SIGTERM, on which it stops its runs. The window shows a citation such as `[1]` without its brackets; `report.md` keeps them. opencode runs a `` !`command` `` written in any command's text, typed text included, in the shell before the model sees it, so never write one in a question.
+
 The headless settings copies deny what opencode would otherwise ask about, because a headless run that asks ends without an answer. The report, the raw events, `graph.json` and one trajectory line per run go under `~/agent-data/ask/`; `--scope` says whether the run is copied to the trajectory store. In the window, `/ask question` asks the model to follow the same steps itself and `/verify` checks the last answer; keep one task per session and start a new session for the next.
 
 ## The knowledge-boundary probe
@@ -36,7 +38,8 @@ The headless settings copies deny what opencode would otherwise ask about, becau
                                             # factual questions, each in a fresh session, scored; --ab also runs the settings
                                             # without the rules, agents, commands and skills; --no-skills leaves the skills out
                                             # of every run; --variant medium also runs them at that thinking effort
-    scripts/harness/ask-check.sh            # ask.py in every mode, resumed, with four lanes and one, plus the probe and the
+    scripts/harness/ask-check.sh            # ask.py in every mode, resumed, with four lanes and one, /custom-graph through the
+                                            # window's command and stopped through opencode's server, plus the probe and the
                                             # effort variant, against the stand-in model server; no GPU needed
 
 ## Measuring the model server
