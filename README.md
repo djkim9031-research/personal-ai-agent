@@ -9,8 +9,9 @@ It is built one increment at a time. `DEVLOG.md` records what each increment bui
 - `.githooks/`: checks that run before every commit and push
 - `scripts/hygiene/`: setup, self-test and audit for those checks
 - `config/vllm/`: the model server's pinned settings, package lock and start script
-- `config/systemd/`: the service definition template
+- `config/systemd/`: the service definition templates: the model server, the email gateway and its egress rules
 - `scripts/serve/`: install, download, service setup, check and ask scripts for the model server
+- `config/hermes/`, `config/nftables/`, `scripts/shell/`: the personal shell over email: pins, settings, the mail variables' names, the egress rules, and the install, start and check scripts
 - `config/opencode/`: the coding harness's pinned release, its settings, the working rules every session reads and the subagent prompts
 - `scripts/harness/`: install and start scripts for the harness, the recording proxy, the twenty-step test, its scorer, the replay, the repo-facts test, the step-by-step question runner and a stand-in model server for checks without the GPU
 - `skills/`: templates for skill folders; filled-in copies live outside the repository
@@ -76,6 +77,26 @@ Checks:
     scripts/harness/repo-facts.py --questions scripts/harness/repo-facts.example.json --project DIR --out OUT --ab
                                             # factual questions, each in a fresh session, scored; --ab also runs the settings without the rules, agents, commands and skills; --no-skills leaves the skills out of every run; --variant medium also runs them at that thinking effort
     scripts/harness/ask-check.sh            # ask.py in every mode, resumed, with four lanes and one, plus the probe and the effort variant, against the stand-in model server; no GPU needed
+
+## Running the personal shell
+
+The agent is reached by email. Hermes Agent's gateway reads a mailbox that only the agent uses and answers mail from one allowed address with the local model. It runs as its own user, `hermes`, which may open connections only to the model server, the local resolver and the two mail ports; the commands the model runs go into a container with no network, under a rootless Docker daemon of that user.
+
+One-time setup, in this order; each step prints the next:
+
+    sudo scripts/shell/setup-hermes-user.sh                      # the hermes user, subordinate IDs, uidmap, linger
+    sudo -u hermes -H scripts/shell/install-rootless-docker.sh   # Docker's static release for hermes, the sandbox image
+    sudo -u hermes -H scripts/shell/install-hermes.sh            # the pinned Hermes release and its settings
+    sudo scripts/shell/set-mail-secret.sh                        # the mailbox settings and app password, never printed
+    sudo scripts/shell/enable-shell.sh                           # the egress rules, loaded at boot from now on, and the gateway unit
+
+The pins are in `config/hermes/hermes.env`, the settings in `config/hermes/settings.txt` and the mail variables' names in `config/hermes/env.example`; the addresses themselves stay in a private file.
+
+The gateway starts and stops with the model server. `sudo systemctl start agent-vllm` starts it once the model answers, and the allowed address gets an "Agent online" email; `sudo systemctl stop agent-vllm` stops it first and sends "Agent offline". While it is stopped nothing reads the mailbox, and the next start skips the mail already there, so send again what was written meanwhile.
+
+    systemctl status agent-hermes          # the gateway
+    sudo journalctl -u agent-hermes -f     # its log
+    sudo scripts/shell/check-shell.sh      # what the gateway sees, what hermes can read, the sandbox from inside, the egress counters
 
 ## License
 

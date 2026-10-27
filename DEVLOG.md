@@ -266,3 +266,76 @@ The GPU sessions ran in one day: the knowledge-boundary probe in two arms; the n
 - **The trajectory store works.** The five runs of the day wrote 67 trajectory lines, 11 of them with a checker verdict (8 correct): the first verified traces for the Phase 3 data set, collected without extra work.
 
 Next: a decompose prompt with a fixed shape (one chain per named entry point) or two samples with the checkable one kept; the claims node asked for load-bearing claims; the subagents' tokens counted from the lane database; the verify-set builder phrasing substring keys as "names at least"; then increment 6c, the edit flow, and the by-hand close of increment 6.
+
+Closed 2026-10-26: increment 6 ends here. Increment 6c, the by-hand edit cycle and the follow-ups above are deferred.
+
+## Increment 7: personal shell over email
+
+Dates: 2026-10-26 (brief, build), 2026-10-27 (install, checks).
+
+Brief: Hermes Agent (MIT, Nous Research) becomes the always-on program reached from the phone. Its gateway runs only while the model server runs: it starts with the server, waits until the model answers, and stops before it. While running it reads a mailbox that only the agent uses every 15 seconds, acts on mail from one allowed address whose signature the mail provider has verified, and answers in the same thread with the local model. Commands the model runs go into a container with no network, started by a rootless Docker daemon under the agent's own user, `hermes`, which belongs to no privileged group. That user may open connections only to the model server, the local resolver and the two mail ports.
+
+Decisions (2026-10-26):
+
+- The channel is email. Telegram and Signal were ruled out. WhatsApp was dropped: from this network the only route is an unofficial bridge on a linked device, which the service's terms forbid and can ban, and its official business API needs a public webhook and since 2026-01-15 excludes general-purpose assistants.
+- One mailbox at Gmail for the agent; one allowed sender, the owner's personal address. The adapter drops mail sent from its own address, so the two must differ.
+- Work tasks may be answered in full by email. The mailbox then holds work content; the rules for cloud models and training are unchanged.
+- The agent works only while the model server runs. Hermes alone would keep reading mail with the server stopped and answer that the model is unreachable, using up each request; tied to the server's unit, it reads nothing while the server is off. On start it skips mail already in the mailbox, so a request sent while it was off must be sent again.
+- The sandbox is rootless Docker. The system Docker, which other work uses, is not touched.
+
+What could leave the machine, from the documentation and the source of v0.22.5, and the switch for each:
+
+- Usage metrics, opt-in: `telemetry.shared_metrics` off; the installer's local receipt is deleted by the opt-out.
+- A daily update check against the GitHub API: `updates.check: false`. One route ignores it (upstream issue 126888).
+- A model registry fetch, with no switch (same issue).
+- Web search and extraction through a vendor by default, with keyless free-tier fallbacks: the web toolset stays off until increment 10, the fallbacks off.
+- The mail itself: the provider stores both sides of every thread.
+
+Two of these have no switch, so an nftables allowlist for the `hermes` user enforces the rest: anything else is counted, logged and refused.
+
+Measured before the build, from this workstation:
+
+| Measure | Result |
+|---|---|
+| Mail ports | reading 993 open, sending 465 (implicit TLS) open, 587 closed |
+| App-password login | reading and sending both work |
+| A reply from the owner's address | `Authentication-Results` from `mx.google.com`: `dkim=pass, spf=pass, dmarc=pass`, which is what the adapter requires |
+
+Check, after the build: the owner's mail gets a reply, with the round trip timed; mail from another address gets none; a message put in the mailbox without the provider's verdict gets none; inside the sandbox there is only loopback, no route to the model server, no Docker socket and no mail variables; the `hermes` user cannot read the agent's private data; during ten questions nothing leaves except mail, model and resolver traffic, and every refused attempt is listed; the request body carries `reasoning_effort: xhigh`; while the model server is stopped nothing reads the mailbox, and mail sent meanwhile is not answered later; a stop during a run lets that run finish within the drain limit; the gateway comes back with the model server after a crash restart.
+
+### Results of increment 7 (2026-10-27)
+
+Built on 2026-10-26 and installed by the owner in five steps, each run with sudo, the two that act as `hermes` as that user:
+
+- `scripts/shell/setup-hermes-user.sh`: the `hermes` system user (no login shell, no extra groups), subordinate IDs, `uidmap` and `slirp4netns`, cgroup delegation and linger for its user manager; the private data folder closed to other local users.
+- `scripts/shell/install-rootless-docker.sh`: Docker 29.8.1's static release for `hermes`, hash-checked, as its user service; the sandbox image pulled by digest.
+- `scripts/shell/install-hermes.sh`: the reviewed installer at the v0.22.5 commit, hash-checked; the settings in `config/hermes/settings.txt`; the metrics receipt removed.
+- `scripts/shell/set-mail-secret.sh`: the mailbox settings and the app password into `hermes`' private `.env`, never printed.
+- `scripts/shell/enable-shell.sh`: the egress rules, loaded at boot from now on, and the gateway unit bound to the model server's.
+- From the unit, `wait-ready.sh` holds the gateway until the model and Docker answer, and `mail-notice.py` sends the online and offline notices, at most three online notices an hour.
+- `scripts/shell/check-shell.sh`: the read-only checks that need root.
+
+| Check | Result |
+|---|---|
+| Lifecycle | start: the gateway active 9 s after the model server, online notice sent; stop: the gateway stopped first, after 26 s of draining, offline notice sent; start again: online again; the owner's mail answered by the local model |
+| Another sender | a stranger's message with a provider-style pass verdict, put in the mailbox over IMAP: marked read after 19 s, no reply, no model request |
+| No provider verdict | a message from the owner's address without `Authentication-Results`: dropped with the adapter's warning after 22 s, no reply, no model request |
+| The gateway's own view | `/home` shows only `hermes`' home and the path to the two helper scripts, `/run/user` only its runtime folder; `hermes` cannot enter the private data folder |
+| The sandbox | one container, image pinned by digest; network none, only `lo`; the model port and the internet unreachable from inside; no Docker socket; empty `/home`; no variable beyond the image's own; root inside is `hermes` outside, every other ID a subordinate one; all capabilities dropped but chown, dac_override, fowner, setgid and setuid; no-new-privileges; 2048 processes, 4 GiB, 2 CPUs; all 15 mounts from `hermes`' home, the sandbox home and workspace writable, Hermes' caches and skills read-only |
+| Egress since the rules were corrected | model 5 connections, mail 21, resolver 0 (names go through the resolver's local socket, not port 53), refused 16: at start Hermes tried GitHub's raw-content servers and a web-search vendor (parallel.ai), with the web toolset off |
+
+Two defects found by the checks, fixed and verified the same day:
+
+- `ProtectHome=tmpfs` hides `/run/user` as well as `/home`, so `ReadWritePaths=/run/user/<uid>` had nothing to open and the gateway failed every start with status 226/NAMESPACE. The runtime folder is now in `BindPaths`; the failure was reproduced with a throwaway user unit first.
+- The egress rules began with `meta skuid != <uid> accept`. Packets with no user socket behind them, the kernel's own (network-drive mounts, resets, ICMP errors, closing connections), match no skuid rule, so they fell through to the refusal: for 18 hours the workstation's network drives could not connect and other programs' closing packets were refused. Only packets with a positive skuid match now enter the agent's chain (`meta skuid <uid> jump hermes`). Old and new were compared in throwaway network namespaces, and afterwards a network drive mounted with nothing refused.
+
+Open, postponed: the request body at `reasoning_effort: xhigh` (recording proxy), a stop during a run, a crash restart of the model server, restart and reboot behaviour, the round trip time.
+
+Noted for later:
+
+- The `hermes` account could read the owner's files that were open to every local user. The gateway cannot, since its unit hides the home folders, and the sandbox cannot, with no mounts from outside `hermes`' home; but the rootless Docker daemon runs as `hermes` outside the gateway's unit, so a flaw in Hermes could have reached them through it (the model has no tool that adds mounts). The owner closed the home folder to other users the same day (mode 750; the model server's user keeps its own entry, and the gateway's view does not depend on it). Re-running the `hermes` install steps now needs a copy of the scripts outside the home folder.
+- Hermes exits with status 1 when stopped, so the unit reads "failed" after every stop and the offline notice says so; at start it warns that the unit's stop timeout is 90 s, reading another service manager (the unit has 180 s).
+- The Docker storage driver ignores the 10 GB disk cap; Hermes warns that no host-visible output folder is mounted, which matters for files sent back by email; the sandbox image has Python only, no compiler.
+
+Closed 2026-10-27. The source copy of the app password was deleted; the password now lives only in `hermes`' private `.env`. The five open checks above are postponed. Next: increment 8, memory tiers.
+
