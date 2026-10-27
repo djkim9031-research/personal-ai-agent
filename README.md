@@ -1,127 +1,266 @@
 # personal-ai-agent
 
-A personal AI agent that runs on one workstation: an open-weight model served locally, a harness for coding and research, memory consolidated every night, and a small budget for larger open models in the cloud when a task needs them.
+A personal AI agent that runs on one Linux workstation with its own GPU. One open-weight model, Qwen3.8-27B, runs locally, and two programs use it:
 
-It is built one increment at a time. `DEVLOG.md` records what each increment built and how it was checked.
+- **opencode**, for coding in a terminal, in a project folder you start it in.
+- **Hermes Agent**, an assistant you reach by email from your phone. It answers with the same local model, runs commands in a sandbox with no network, keeps notes about you that you approve, reviews each day's conversations at night, and can search the web.
 
-## What is here
+No cloud model is used. Your files, notes and conversations stay on the machine.
 
-- `.githooks/`: checks that run before every commit and push
-- `scripts/hygiene/`: setup, self-test and audit for those checks
-- `config/vllm/`: the model server's pinned settings, package lock and start script
-- `config/systemd/`: the service definition templates: the model server, the email gateway and its egress rules
-- `scripts/serve/`: install, download, service setup, check and ask scripts for the model server
-- `config/hermes/`, `config/nftables/`, `scripts/shell/`: the personal shell over email: pins, settings, the mail variables' names, the egress rules, and the install, start and check scripts
-- `config/agent-memory/`, `scripts/agent-memory/`: the agent's memory: seed templates, the nightly memory commit and session export, the check
-- `config/hermes/skills/nightly-review/`, `scripts/dream/`: the nightly review of the day's conversations
-- `config/web/`, `scripts/web/`, `config/hermes/plugins/web/agentweb/`: web search and page reading through a local service
-- `config/backup/`, `scripts/backup/`: encrypted backups and the restore test
-- `scripts/review/`, `docs/phase1-validation.md`: the Phase 1 review: evidence script, round trips, every validation step
-- `config/opencode/`: the coding harness's pinned release, its settings, the working rules every session reads and the subagent prompts
-- `scripts/harness/`: install and start scripts for the harness, the recording proxy, the twenty-step test, its scorer, the replay, the repo-facts test, the step-by-step question runner and a stand-in model server for checks without the GPU
-- `skills/`: templates for skill folders; filled-in copies live outside the repository
-- `docs/decisions/`: decision records
+The project is built one increment at a time; `DEVLOG.md` records what each increment built and how it was checked.
 
-## What is never here
+- [Requirements](#requirements)
+- [Part 1: the model server](#part-1-the-model-server)
+- [Part 2: coding with opencode](#part-2-coding-with-opencode)
+- [Part 3: the email assistant (Hermes and Gmail)](#part-3-the-email-assistant-hermes-and-gmail)
+- [Part 4: memory, nightly review, web search and backups](#part-4-memory-nightly-review-web-search-and-backups)
+- [Day to day](#day-to-day)
+- [What is in this repository](#what-is-in-this-repository)
+- [Committing to this repository](#committing-to-this-repository)
 
-Model weights, memory, conversation logs, documents, keys and tokens. They live in a private data folder outside the repository, and the checks refuse them.
+## Requirements
 
-## Setting up a clone
+- Linux with systemd and sudo. Tested on Ubuntu 22.04.
+- An NVIDIA GPU. Tested on one 72 GB card with driver 580: the server takes 80% of it (about 58 GB) for the model and a 131,072-token context. On a smaller card, lower `GPU_MEMORY_UTILIZATION` and `MAX_MODEL_LEN` in `config/vllm/serve.env`.
+- About 40 GB of disk for the model and the runtime (29 GB and 8 GB here).
+- `uv` (installs Python and the packages), `git`, `curl` and `acl` (`setfacl`). Part 3 also needs `nftables` (the `nft` command; its service stays disabled, see Part 3).
+- For Part 3: outgoing connections to `imap.gmail.com` port 993 and `smtp.gmail.com` port 465.
+
+Run every command from the repository's folder, for example `~/personal-ai-agent`.
+
+**The private data folder.** Everything that is not code stays in `~/agent-data`: the model, the runtime, your secrets, the agent's notes and conversations. Nothing in it is ever committed. Create the folder for secrets once:
+
+    mkdir -p ~/agent-data/secrets && chmod 700 ~/agent-data/secrets
+
+## Part 1: the model server
+
+The model runs in vLLM as the service `agent-vllm`, under its own user `agent-serve`, listening only on `127.0.0.1:8000`. It is not started at boot; you start it when you want the agent and stop it to free the GPU.
+
+**Install, once** (mostly downloads, 20 to 40 minutes):
+
+1. `scripts/serve/install-runtime.sh`: builds Python 3.12 and vLLM 0.31.0 under `~/agent-data/runtime` from the pinned package list.
+2. `scripts/serve/download-model.sh`: downloads `Qwen/Qwen3.8-27B-FP8` at the pinned revision into `~/agent-data/hf` and checks every weight file.
+3. `sudo scripts/serve/setup-service.sh`: creates the `agent-serve` user, gives it read-only access to the runtime and the model, and installs the `agent-vllm` service.
+
+**Use:**
+
+| Command | What it does |
+|---|---|
+| `sudo systemctl start agent-vllm` | Starts the server; returns once the model answers, about 3 minutes. |
+| `scripts/serve/verify.py` | Checks the running server against the pinned settings. Expect 13 checks passed. |
+| `scripts/serve/ask.py "What is 17 times 23?"` | One question; prints the model's thinking dimmed, then the answer and its speed. Add `--effort low` for a quick answer or `--image FILE` to ask about a picture. |
+| `sudo systemctl stop agent-vllm` | Stops the server and frees the GPU. Stop it before other GPU jobs. |
+| `journalctl -u agent-vllm -f` | The server's log. |
+
+## Part 2: coding with opencode
+
+opencode 1.19.3 reads, searches and edits the files of the folder you start it in and runs commands there, with the local model. It never commits; you review the changes and commit yourself.
+
+**Install, once:**
+
+    scripts/harness/install-opencode.sh
+
+It downloads the pinned release, checks its hash, and links `~/.local/bin/opencode`. If `opencode` is not found afterwards, add `~/.local/bin` to your `PATH`.
+
+**Use** (the model server must be running):
+
+    cd ~/code/my-project
+    git worktree add ../my-project-task -b my-task   # optional: a separate copy of the project for one task
+    cd ../my-project-task
+    opencode
+
+- Type a request in the window, for example `Find where the settings file is read and list the functions it passes through.`
+- The **plan** agent only reads; the **build** agent may edit files and run commands. The Tab key switches between them. Reading or editing a file outside the project folder asks for your permission first.
+- `/verify` checks the factual claims of the last answer against the files. `/ask your question` answers in steps: narrow questions, one helper session each, every answer checked.
+- For one task without the window: `opencode run "your request"`.
+
+What the launcher sets for every session: the model is the local server only; sharing and the update check are off; web fetch and web search are denied; skills of other tools in your home folder are ignored; every session reads the working rules in `config/opencode/AGENTS.md` (numbers only from commands, sources named, guesses marked as guesses).
+
+**Skills.** opencode reads skills from `~/agent-data/work/skills/`. `skills/repo-facts/` is a template for a fact sheet about one codebase: copy the folder there and fill it in, and the model reads it instead of guessing.
+
+**Checked answers to questions about a codebase**, without the window:
+
+    scripts/harness/ask.py --project ~/code/my-project --scope personal "How does a request get from the HTTP handler to the database?"
+
+It splits the question into small ones, answers each in a fresh session, has a separate checker confirm or refute every answer against the files, and writes the report under `~/agent-data/ask/`. Modes, options, the checks and the measurements are described in `docs/coding-harness.md`.
+
+## Part 3: the email assistant (Hermes and Gmail)
+
+You email the agent's own Gmail address from your personal address. Hermes Agent reads that mailbox every 15 seconds while the model server runs, answers with the local model, and replies in the same thread. It runs as its own user, `hermes`, which cannot read your files. The commands the model runs go into a Docker container with no network. A firewall rule lets the `hermes` user connect only to the model server, the local name resolver and the two mail ports (993 and 465), plus the local fetch service once web search is installed. Mail from any other address, or mail that Gmail did not verify as coming from your address, is ignored.
+
+### Step 1: a Gmail account for the agent
+
+1. Create a new Google account used only by the agent, for example `yourname.agent@gmail.com`. Do not use your main account: the agent reads everything that arrives in this inbox.
+2. Turn on 2-Step Verification for that account (Google Account, Security).
+3. Create an app password at https://myaccount.google.com/apppasswords. Google shows 16 letters; keep the page open for step 2. App passwords need 2-Step Verification and are not offered when the account signs in with security keys only.
+4. Choose the one address the agent will answer: your own address. It must differ from the agent's address, because the agent ignores mail from itself.
+
+IMAP needs no switching on in Gmail. Port 587 is not used.
+
+### Step 2: two private files
+
+The addresses (replace both):
+
+    cat > ~/agent-data/secrets/hermes-mail.env <<'EOF'
+    EMAIL_ADDRESS=yourname.agent@gmail.com
+    EMAIL_ALLOWED_USERS=you@example.com
+    EOF
+    chmod 600 ~/agent-data/secrets/hermes-mail.env
+
+The app password, typed without showing it on screen (spaces are fine):
+
+    (umask 077; read -rs -p 'app password: ' pw; echo; printf '%s' "$pw" > ~/agent-data/secrets/agent-gmail-app-password)
+
+### Step 3: install
+
+Five commands, 10 to 20 minutes; each one prints the next.
+
+1. `sudo scripts/shell/setup-hermes-user.sh`
+   Creates the `hermes` user (no login, no extra groups), installs `uidmap` and `slirp4netns`, lets its services start at boot, and closes `~/agent-data` to other users.
+   If it stops with `hermes cannot read …/scripts/shell`, your home folder is closed to other users (Ubuntu's default is mode 750). Let `hermes` pass through it for the install, then run step 1 again:
+   `sudo setfacl -m u:hermes:--x ~`
+   This lets `hermes` reach the repository by its full path. It still cannot list your home folder or enter `~/agent-data`.
+2. `sudo -u hermes -H scripts/shell/install-rootless-docker.sh`
+   A Docker daemon for the `hermes` user only (the system Docker is not touched), and the sandbox image (Python 3.12, pinned by digest). Expect `sandbox runs as uid 0 with ['lo']`: the container's only network is loopback.
+3. `sudo -u hermes -H scripts/shell/install-hermes.sh`
+   Hermes Agent v0.22.5 at a pinned commit (its installer is hash-checked) and its settings: the local model, the Docker sandbox with no network, telemetry and update checks off, approval needed before the agent saves a note or a skill. 5 to 15 minutes.
+4. `sudo scripts/shell/set-mail-secret.sh`
+   Writes the mailbox settings into the `hermes` user's private settings file. It prints no password. Then delete your copy:
+   `rm ~/agent-data/secrets/agent-gmail-app-password`
+5. `sudo scripts/shell/enable-shell.sh`
+   Loads the firewall rule for the `hermes` user (and again at every boot) and installs the gateway service `agent-hermes`, which starts and stops with the model server.
+
+If you ran the `setfacl` line in step 1, remove it now: `sudo setfacl -x u:hermes ~`. The services do not need it. Running steps 2 or 3 again later does.
+
+Do not enable `nftables.service`: it would flush the whole firewall, including ufw's rules. The agent's rules are loaded by their own small services.
+
+### Step 4: start and test
+
+1. `sudo systemctl start agent-vllm`. The gateway starts once the model answers. Within a minute your address receives **Agent online**.
+2. From your address, email the agent: `What is 17 times 23? Check it by running python3 -c 'print(17*23)' in your sandbox and tell me the output.` Expect a reply with 391 in the same thread, within 1 to 3 minutes.
+3. `sudo systemctl stop agent-vllm` stops the gateway first, then the model. Your address receives **Agent offline**.
+
+**Good to know:**
+
+- The agent works only while the model server runs. Mail sent while it is stopped is never answered: on the next start it skips the mail already in the inbox, and the Agent online email says how many it skipped. Send those again.
+- A slash command works only as the first line of a **reply**; in a new email the subject is put in front of your text. `/new` starts a fresh conversation. The memory commands are in Part 4.
+- `systemctl status agent-hermes` shows `failed` after every stop. Hermes exits with status 1 when stopped; nothing is wrong.
+
+**Checks and logs:**
+
+    journalctl -u agent-hermes -f          # the gateway's log
+    sudo scripts/shell/check-shell.sh      # what the gateway can see, what hermes can read, the sandbox from inside, the firewall counters
+
+## Part 4: memory, nightly review, web search and backups
+
+Each piece is optional, but install them in this order. Each command prints what it did.
+
+### Memory
+
+The agent keeps two short files of notes: `USER.md` (about you, at most 1,375 characters) and `MEMORY.md` (about its own setup, at most 2,200 characters). It reads them when a conversation starts. Every save waits for your approval. All its conversations stay searchable.
+
+1. Write the first notes from the templates. Entries are separated by a line holding only `§`.
+
+        mkdir -p ~/agent-data/hermes/memory-seed
+        cp config/agent-memory/USER.md.example   ~/agent-data/hermes/memory-seed/USER.md
+        cp config/agent-memory/MEMORY.md.example ~/agent-data/hermes/memory-seed/MEMORY.md
+        cp config/agent-memory/scope.example.json ~/agent-data/hermes/scope.json
+        # edit the three files, then:
+        sudo scripts/agent-memory/seed-memory.sh
+
+   `scope.json` lists your project folders as `personal_paths` and `work_paths`. It decides how opencode conversations are filed; a folder in neither list counts as work.
+2. `sudo scripts/agent-memory/enable-memory.sh` installs two nightly jobs, which run whether or not the model server is up:
+   - 02:30, as `hermes`: commits the day's note changes to git and exports the day's conversations.
+   - 02:45, as you: files them under `~/agent-data/trajectories/work/` or `personal/`, together with your opencode window sessions, and keeps a copy of the notes in `~/agent-data/memory/hermes/`.
+
+**Using it by email** (each command as the first line of a reply):
+
+| You send | What happens |
+|---|---|
+| `/new` | A fresh conversation, which reads the notes as they are now. |
+| `Please remember that I prefer metric units.` | The agent prepares a note and says it is waiting for approval. |
+| `/memory pending` | Lists the notes waiting, with their ids. Read them first: the agent may word a fact differently from you, or add one you did not ask for. |
+| `/memory approve all` or `/memory reject <id>` | Applies them, or drops one. |
+| `What did I say about the plant on my desk?` | Searches past conversations, including facts never saved as notes. |
+
+To keep a conversation out of `work`, put `[personal]` in the subject of its first email after `/new`. Untagged conversations are filed as work.
+
+**Correcting a note yourself**, without the model and without approval:
+
+    sudo scripts/agent-memory/edit-memory.sh replace user "metric units" "I prefer metric units, and dates as 2026-10-27."
+    sudo scripts/agent-memory/edit-memory.sh add user "I drink my coffee black."
+    sudo scripts/agent-memory/edit-memory.sh remove memory "an old note"
+
+Each change is committed to the notes' git history. `sudo scripts/agent-memory/check-memory.sh` shows the notes as the next conversation will see them, their history, and what was filed.
+
+### Nightly review
+
+    sudo scripts/dream/enable-dreaming.sh
+
+At 03:00 the agent rereads the last day's conversations. It proposes at most six note changes, each quoting your own words, and emails you the list; approve with `/memory approve all`. The review needs the model. If the server is off at 03:00, the review runs once, a minute after the next start.
+
+### Web search
+
+    sudo scripts/web/setup-web.sh
+
+This adds a new user, `agentweb`, which runs SearXNG (a search engine on this machine that asks Brave, Bing, Wikipedia, arXiv, GitHub and Stack Overflow) and a small fetch service. The agent may read only pages that its own searches returned in the last 24 hours, and only on public addresses. The `agentweb` user may connect only to web ports on public addresses; the agent's own user still has no internet access. Both services start and stop with the agent.
+
+For example, ask `What is the latest release of restic? Give the page you read.` and the reply names the version and the release page. Ask `Read https://example.com/ directly, without searching` and the agent reports that the fetch service refused it. Engines are chosen in `config/web/searxng-settings.yml`.
+
+### Backups
+
+1. List what must never go into a backup, one extended regular expression per line, for example your employer's project names. A file with only a comment line works if there is nothing to exclude.
+
+        printf '# names kept out of backups\n' > ~/agent-data/hermes/work-patterns.txt
+
+2. `sudo scripts/backup/setup-backup.sh`
+
+Every night at 04:00, restic stores an encrypted copy of the agent's notes and settings and of your personal conversations in `/var/backups/agent-restic`. It leaves out work conversations, secrets, and any text file matching the list. Every Sunday old copies are thinned and part of the data is read back.
+
+The copies are encrypted with a password that the script created in `/root/.config/agent-backup/restic-password`. Keep a copy of it somewhere else, because without it the backups cannot be read:
+
+    sudo cat /root/.config/agent-backup/restic-password
+    sudo scripts/backup/restore-test.sh    # restores the newest copy into a temporary folder and compares it with the live files
+
+`/var` is on the same machine, so these copies protect against deleted or damaged files, not against losing the machine.
+
+## Day to day
+
+| When | Command or event |
+|---|---|
+| Use the agent | `sudo systemctl start agent-vllm`; wait for Agent online. |
+| Free the GPU | `sudo systemctl stop agent-vllm`; Agent offline follows. |
+| 02:30, 02:45 | Notes committed, conversations exported and filed. Runs with or without the model server. |
+| 03:00 | Nightly review, only while the model server runs; otherwise once at the next start. |
+| 04:00, Sunday 05:00 | Backup; weekly backup check. Runs with or without the model server. |
+| Any time | `sudo scripts/review/phase1-check.sh 7` prints the evidence for the last 7 days: services, firewall refusals, email round trips, backups, and the repository audit. |
+
+`docs/phase1-validation.md` lists every check of Parts 3 and 4 with its expected result.
+
+## What is in this repository
+
+- `config/vllm/`, `scripts/serve/`: the model server's pinned settings, package list, start script, and the install, check and ask scripts.
+- `config/opencode/`, `scripts/harness/`, `skills/`: the coding harness: pinned release, settings, working rules and prompts; install and start scripts; the step-by-step question runner and its tests; skill templates.
+- `config/hermes/`, `config/nftables/`, `scripts/shell/`: the email assistant: pins, settings, the mail settings template, the firewall rules, and the install, start and check scripts.
+- `config/agent-memory/`, `scripts/agent-memory/`: note templates, the nightly memory jobs, the note editor and the check.
+- `config/hermes/skills/nightly-review/`, `scripts/dream/`: the nightly review.
+- `config/web/`, `scripts/web/`, `config/hermes/plugins/web/agentweb/`: web search and page reading.
+- `config/backup/`, `scripts/backup/`: backups and the restore test.
+- `config/systemd/`: every service and timer, as templates the scripts fill in.
+- `scripts/review/`, `scripts/measure/`: the review evidence, email round trips, and the server measurements.
+- `docs/`: decision records, measurements, the coding harness in detail, the validation steps.
+- `.githooks/`, `scripts/hygiene/`: checks that run before every commit and push.
+
+**Never here:** model weights, notes, conversations, documents, keys and passwords. They live in `~/agent-data`, and the commit checks refuse them.
+
+## Committing to this repository
+
+Only needed if you commit to this repository:
 
 1. `scripts/hygiene/install-gitleaks.sh`
 2. Create a deny-list file at the path in `.githooks/lib.sh`, in the format described there.
 3. `scripts/hygiene/setup-repo.sh --name NAME --email EMAIL --gh-user LOGIN`
 4. `scripts/hygiene/selftest.sh`
-
-## Running the model server
-
-One-time setup, after `scripts/serve/install-runtime.sh` and `scripts/serve/download-model.sh`:
-
-    sudo scripts/serve/setup-service.sh
-
-Then:
-
-    sudo systemctl start agent-vllm      # returns once the model answers, about 3 minutes
-    scripts/serve/verify.py              # 13 checks
-    scripts/serve/ask.py "your question" # add --effort low or --image FILE
-    sudo systemctl stop agent-vllm       # frees the GPU
-    sudo journalctl -u agent-vllm -f     # the server's log
-
-The service is not enabled at boot. It holds about 58 GB of GPU memory while it runs, so stop it before other GPU jobs.
-
-## Measuring the server
-
-`scripts/measure/run.sh` measures speed, answer quality, cache reuse and GPU power with the service stopped, MTP on and off in turns, and writes everything under `~/agent-data/measure/results/<date>`. `scripts/measure/report.py` turns a results folder into the tables in `docs/measurements.md`. The prompts come from public code and from `scripts/measure/quality.jsonl`, 24 short tasks a script can grade.
-
-
-## Running the coding harness
-
-opencode, pinned in `config/opencode/opencode.env`, works on files with the local model: it reads, searches, edits and runs commands in the folder it is started in. Once:
-
-    scripts/harness/install-opencode.sh    # downloads the release, checks its hash, links ~/.local/bin/opencode
-
-Then, with the model server running, inside a git worktree made for the task:
-
-    git worktree add ../project-task -b task
-    cd ../project-task
-    opencode                               # the terminal window; `opencode run "..."` for one task without it
-
-`~/.local/bin/opencode` is `scripts/harness/opencode.sh`, which starts the pinned release with `config/opencode/opencode.json` and the switches that keep it on this machine: the model is the local server, sharing and the update check are off, the model catalogue and language servers are not downloaded, web fetch and web search are denied, and the skills of other tools in the home folder are ignored. The agent never commits; review the diff and commit yourself.
-
-Every session also reads `config/opencode/AGENTS.md`, the working rules: numbers only from commands, names only with their source, guesses marked as inferred, one question per subagent, a verify pass before a factual answer. The built-in explore subagent runs on `config/opencode/prompts/explore.md` with a cap of 30 steps; the `verify` subagent (`prompts/verify.md`) tries to refute a list of claims against the repository, and `/verify` in the window hands it the claims of the last answer. `skills/repo-facts/` is a template for a fact sheet the model reads instead of guessing; fill it in outside the repository.
-
-`scripts/harness/ask.py --project DIR "question"` runs a question as a graph of opencode runs: the flows are data in `scripts/harness/ask_flows.py`, executed by `scripts/harness/graph.py`, and every node names its agent, prompt, thinking effort, session, skills, tool cap and timeout; the text of one node fills the prompt of the next, so no step depends on the model remembering a rule. Narrow mode, the default: the model splits the question into fact questions (one command or one file each) and mechanism questions (a chain of `path:line` hops); each is answered in a fresh session, four at a time in private opencode homes; the hidden `check` agent (the verifier as a primary agent, `prompts/verify.md`) refutes or confirms them in batches of about six units, a fact being one unit and a hop chain as many as its hops; the answer is composed from the verified pairs only, cited by number, with "not checked" where they do not reach. `--mode broad` answers in one session, has the model list its claims, checks them in batches and rewrites the answer only when a claim was partly or wrong. `--mode verifyset --claims FILE` checks claims with known truth, to measure the checker itself. `--mode self` is the model-driven graph: the window's `/ask` steps followed by the model in one session, then checked by the same claims and checker nodes, so the coded graph and the model-driven one are compared under one checker. `--no-skills` leaves the skills out, so a fact sheet cannot stand in for the repository when the model's own reading is what is measured; the verifier agents never see the skills. The headless settings copies deny what opencode would otherwise ask about, because a headless run that asks ends without an answer. `--effort node=variant,...` sets the thinking effort per node (`low`, `medium`, `xhigh`, `off`), `--resume DIR` reruns only the nodes whose spec or inputs changed (a raised tool cap or timeout reruns only the nodes it stopped), `--dry-run` prints the graph. The report, the raw events, `graph.json` and one trajectory line per run go under `~/agent-data/ask/`; `--scope` says whether the run is copied to the trajectory store. In the window, `/ask question` asks the model to follow the same steps itself and `/verify` checks the last answer; keep one task per session and start a new session for the next.
-
-`scripts/harness/probe.py --questions FILE --out DIR` measures the model's knowledge boundary on the private questions: no tools, no files, several seeded samples each, with the working rules as the system message and without. Every sample is classed as correct, declined, wrong-confident or no answer line; the wrong-confident rate is what the verifier has to catch. An empty reply, the generation complete with nothing after the thinking, is counted apart: under the working rules the model writes a tool call, which the server drops when no tool was offered. `scripts/harness/make-verify-set.py` turns the answer key and the probe's wrong answers into a claims file for the verifyset mode.
-
-Checks:
-
-    scripts/harness/egress-check.sh DIR     # one task inside a network namespace that can only reach the model server
-    scripts/harness/run-session.py --out OUT [--stream off]   # the twenty-step test on a scratch project, recorded
-    scripts/harness/replay.py OUT/recording # sends the recorded requests again and compares the tool calls
-    scripts/harness/repo-facts.py --questions scripts/harness/repo-facts.example.json --project DIR --out OUT --ab
-                                            # factual questions, each in a fresh session, scored; --ab also runs the settings without the rules, agents, commands and skills; --no-skills leaves the skills out of every run; --variant medium also runs them at that thinking effort
-    scripts/harness/ask-check.sh            # ask.py in every mode, resumed, with four lanes and one, plus the probe and the effort variant, against the stand-in model server; no GPU needed
-
-## Running the personal shell
-
-The agent is reached by email. Hermes Agent's gateway reads a mailbox that only the agent uses and answers mail from one allowed address with the local model. It runs as its own user, `hermes`, which may open connections only to the model server, the local resolver and the two mail ports; the commands the model runs go into a container with no network, under a rootless Docker daemon of that user.
-
-One-time setup, in this order; each step prints the next:
-
-    sudo scripts/shell/setup-hermes-user.sh                      # the hermes user, subordinate IDs, uidmap, linger
-    sudo -u hermes -H scripts/shell/install-rootless-docker.sh   # Docker's static release for hermes, the sandbox image
-    sudo -u hermes -H scripts/shell/install-hermes.sh            # the pinned Hermes release and its settings
-    sudo scripts/shell/set-mail-secret.sh                        # the mailbox settings and app password, never printed
-    sudo scripts/shell/enable-shell.sh                           # the egress rules, loaded at boot from now on, and the gateway unit
-
-The pins are in `config/hermes/hermes.env`, the settings in `config/hermes/settings.txt` and the mail variables' names in `config/hermes/env.example`; the addresses themselves stay in a private file.
-
-The gateway starts and stops with the model server. `sudo systemctl start agent-vllm` starts it once the model answers, and the allowed address gets an "Agent online" email; `sudo systemctl stop agent-vllm` stops it first and sends "Agent offline". While it is stopped nothing reads the mailbox, and the next start skips the mail already there, so send again what was written meanwhile.
-
-    systemctl status agent-hermes          # the gateway
-    sudo journalctl -u agent-hermes -f     # its log
-    sudo scripts/shell/check-shell.sh      # what the gateway sees, what hermes can read, the sandbox from inside, the egress counters
-
-## Memory, nightly review, web research and backups
-
-Set up after the personal shell, in this order; each step prints what it did:
-
-    sudo scripts/agent-memory/seed-memory.sh       # USER.md and MEMORY.md from the private seed folder, with git history
-    sudo scripts/agent-memory/enable-memory.sh     # nightly memory commit and session export (02:30), filing into ~/agent-data (02:45)
-    sudo scripts/dream/enable-dreaming.sh    # the nightly review at 03:00, its report by email
-    sudo scripts/web/setup-web.sh            # SearXNG and the fetch service under the agentweb user
-    sudo scripts/backup/setup-backup.sh      # encrypted backups on /var at 04:00, a weekly check
-
-- **Memory.** `USER.md` (about the owner) and `MEMORY.md` (the agent's notes) are read when a session starts; a reply starting with `/new` starts one. Every save waits for `/memory approve all`; `/memory pending` lists them. Each night the notes are committed to git in hermes' memory folder, and the sessions are filed under `~/agent-data/trajectories/<work|personal>/`: an email session is personal only when its first message carries `[personal]`.
-- **Nightly review.** A Hermes job reads the day's sessions and proposes at most six changes to the notes, each quoting the owner's own words, for approval; the report arrives by email. It runs while the model server runs, or once at its next start.
-- **Web research.** The agent searches through a local SearXNG and reads only pages its searches returned in the last 24 hours, from public addresses only. The fetch service and SearXNG run as their own user; the agent's user reaches only the fetch service.
-- **Backups.** restic snapshots of the memory, the agent's configuration and the personal agent data, encrypted, on `/var`. Work-scope data, secrets and any text file naming a work identifier stay out. `sudo scripts/backup/restore-test.sh` restores the newest snapshot and compares it.
-
-    sudo scripts/agent-memory/check-memory.sh      # the notes as the next session sees them, their history, what was filed
-    sudo scripts/review/phase1-check.sh 7    # evidence for the Phase 1 review, over the last 7 days
-
-`docs/phase1-validation.md` lists every validation step with its expected result.
 
 ## License
 
