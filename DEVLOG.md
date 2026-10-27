@@ -339,3 +339,97 @@ Noted for later:
 
 Closed 2026-10-27. The source copy of the app password was deleted; the password now lives only in `hermes`' private `.env`. The five open checks above are postponed. Next: increment 8, memory tiers.
 
+
+## Increment 8: memory tiers
+
+Dates: 2026-10-27 (brief, build).
+
+Brief: the agent's memory is files and word search, in four tiers. Tier 1, the core notes in every prompt: Hermes' `MEMORY.md` (the agent's notes, at most 2,200 characters) and `USER.md` (the owner's profile, at most 1,375), read when a session starts and frozen for that session, written only through the `memory` tool, which refuses a write that would pass the limit, so the agent has to merge notes rather than pile them up. Tier 2, the full history: every message, tool call and result in Hermes' SQLite store with full-text search, which the `session_search` tool queries without a model call. Tier 3, topic notes, playbooks and past cases under git, comes with the nightly consolidation (increment 9) and the second phase; tier 4, embeddings or a graph, only if a measured memory test shows word search losing.
+
+Evidence, from the research of 2026-10-09: for a single-user agent the findings favour a layered memory built on files; an agent searching plain files scored 74.0% on LoCoMo, ahead of specialised memory libraries; EvoMemBench (May 2026, 15 systems) found no method that wins everywhere and long-context baselines competitive. The limits keep tier 1 at about 1,300 tokens per request, and the frozen copy keeps the start of every prompt identical within a session, so the server's prefix cache reuses it.
+
+Verified in the v0.22.5 source and documentation:
+
+- Over email, all mail from one address is one session. It survives restarts, has no automatic reset, and is compressed when it reaches half the context window. The memory files are read again only by a new session, which a reply starting with `/new` begins; a slash command works only as the first line of a reply, because a new message gets its subject put in front.
+- With `memory.write_approval` on, writes from email wait as files under `pending/memory/` until `/memory approve`; `/memory pending` lists them. A review of the conversation runs every 10 of the owner's messages on the same model and stages its proposals without a notice.
+- The documentation warns that models under about 30B parameters often confirm a save without calling the tool, so the checks read the files, not the replies.
+- The memory files are written atomically with mode 0600. External memory providers, which are cloud services, stay off (`memory.provider` empty), as does the OpenTelemetry export.
+- `hermes sessions export --session-id` writes a session as one JSON line with every message, tool call and result; opencode 1.19.3 has `opencode export <id>`, and its sessions are listed in its own SQLite database with their folder.
+
+Decisions (2026-10-27):
+
+- Seed: `USER.md` with the owner's preferences for answers (literal explanations with real examples, commands inline, brevity, no guessing, a plan before any change of state); `MEMORY.md` with facts about the agent's own setup (a local model, a sandbox with no network and Python only, how mail commands work, that saves wait for approval). No work facts. The seed files are private; the repository has templates.
+- Scope of email conversations: the owner tags each session. The first message after `/new` carries `[work]` or `[personal]` in its subject or at the start of its text; an untagged session is work, and a session that compression continues keeps its tag. opencode window sessions are tagged by folder: folders listed as personal in a private file are personal, everything else is work.
+- Approval stays on, and the post-turn review stays at every 10 messages.
+
+Build: a seed script; a git repository in the agent's memory folder; a nightly job as `hermes` with no network (02:30) that commits the day's memory changes, exports every session with activity since the last run and puts both, with the list of writes waiting for approval, in an outbox that only the owner can read besides `hermes`; a nightly job as the owner with no network (02:45) that files the sessions under `~/agent-data/trajectories/<work|personal>/hermes/`, exports the opencode window sessions changed since its last run under `.../opencode/`, and keeps the memory files and the day's diff under `~/agent-data/memory/hermes/`; a check script.
+
+Check: the seed appears in a new session; three facts taught by email reach the files after approval and are used the next day after `/new`; a fact never saved is found with `session_search`; the prefix-cache hit rate during one session is recorded; the next morning the export holds the day's sessions under the right tags, the opencode sessions under theirs, and the memory diff; a `git revert` in the memory repository restores the notes before it; `hermes` still cannot read the owner's files, and both nightly jobs run without a network.
+
+## Increment 9: nightly review
+
+Dates: 2026-10-27 (brief, build).
+
+Brief: once a night the agent rereads the day's conversations and proposes changes to its two memory files: facts the owner stated, corrections, merges of entries that say the same thing. The proposals wait for the owner's approval like every other memory write, and the review's report arrives by email. Offline consolidation has measured support (research of 2026-10-09: Letta's sleep-time compute, about 5x less compute at answer time and 13-18% higher accuracy); the owner's approval is the gate against a wrong consolidation.
+
+Verified in v0.22.5: scheduled jobs run inside the gateway, each in a fresh session with the skills attached to it; a job that came due while the gateway was stopped fires once at the next start (`cron.catch_up_missed`); `platform_toolsets.cron` limits the tools of every scheduled session; `cron.allow_agent_scheduling` is off, so the agent cannot create jobs; delivery `email` goes to `EMAIL_HOME_ADDRESS`; reports are kept under `~/.hermes/cron/output/`.
+
+Decision (2026-10-27): Hermes' own scheduler and a skill written in this repository, not the plugin from Hermes' catalog.
+
+Build: `config/hermes/skills/nightly-review/SKILL.md` (at most 6 changes a night, each with the session and the owner's own words, nothing about the employer, no secrets, a fixed report format); `scripts/dream/enable-dreaming.sh` (the allowed sender as the email home channel, the skill, scheduled sessions limited to memory, session search, skills and a to-do list, the job at 03:00 delivered by email); the nightly export carries the reports to `~/agent-data/memory/hermes/dreams/`.
+
+Check: seven nights, one report for each night the model ran (or at its next start); every proposal sourced; nothing about the employer; approved proposals in the next night's memory commit; one `git revert` restores a night.
+
+## Increment 10: web research
+
+Dates: 2026-10-27 (brief, build).
+
+Brief: the agent searches the web and reads pages, while its own user still has no internet access. A new system user, `agentweb`, runs SearXNG (a self-hosted metasearch engine) on 127.0.0.1:8888 and a small fetch service on 127.0.0.1:8889. Searches go through the fetch service, which records every result URL for 24 hours; it reads a page only if its URL was such a result, only from public addresses (every address the name resolves to, on every redirect), at most 3 MB, http and https only, and returns the page as plain text. The `hermes` user may reach only 127.0.0.1:8889 for this; `agentweb` may reach only the web ports 80 and 443 on public addresses, so a page cannot lead the agent into this machine or the office network. A Hermes plugin (`web/agentweb`) hands page reading to the service, and Hermes' SearXNG provider is pointed at the same service for searches. Both services start and stop with the gateway.
+
+Verified: in Hermes, SearXNG only searches, and every bundled page reader is a cloud vendor (Firecrawl, Tavily, Exa, Parallel, Keenable, Perplexity); a user web plugin loads from `~/.hermes/plugins/web/<name>/` once enabled under the key `web/<name>`. SearXNG at the pinned commit imports `tomllib`, so it needs Python 3.11 or newer despite declaring 3.10. From this office's address DuckDuckGo answers with a CAPTCHA, and Bing is off in SearXNG's defaults; Brave and Bing returned 27 and 28 results for two test queries.
+
+Decision (2026-10-27): search, plus reading only pages that searches returned; the agent's own user keeps no internet access.
+
+Build: `config/web/` (pins, SearXNG settings, a hash-locked requirements file: 32 packages, 850 hashes), `scripts/web/agent-web.py` (standard library only), `scripts/web/setup-web.sh`, `config/hermes/plugins/web/agentweb/`, `config/hermes/settings-web.txt`, `config/nftables/agent-web-egress.nft.in`, units `agent-searxng`, `agent-web` and `agent-web-egress`; the `hermes` egress rules allow 127.0.0.1:8889.
+
+Checked offline (a test instance run as the owner): results from Brave and Bing; the service refused a page never searched, a request with another Host header, and loopback, private, link-local and non-http addresses; a searched page came back as 13,125 characters of text, and the plugin passed on both the text and the refusals.
+
+Check (owner): ten questions from the phone, the citations checked by hand; the engines over one week (CAPTCHAs and suspensions show in the service's log); `agentweb`'s refused list; the `hermes` counters show web traffic only to the local service.
+
+## Increment 11: backups
+
+Dates: 2026-10-27 (brief, build).
+
+Brief: every night at 04:00 an encrypted restic snapshot of the agent's memory and configuration and of the owner's personal agent data (memory snapshots and diffs, review reports, personal sessions, the seed and scope files, research documents) goes into a repository on `/var`, a separate volume from `/home`. Work-scope sessions, secrets and `hermes`' `.env` never go in, and a text file that names a work identifier from the owner's private list is left out. Every week old snapshots are thinned (14 daily, 8 weekly, 12 monthly) and 10% of the stored data is read back. restic 0.19.1, hash-checked; the job runs as root from a root-owned copy, without network.
+
+Finding: the planned target, Backblaze B2, is not usable from here: the workstation's security software killed a test connection to it (exit 137) while a request to GitHub went through.
+
+Decision (2026-10-27): the `/var` volume of this machine for now. It protects against deletion and corruption, not against losing the machine; a USB disk can be added later.
+
+Build: `config/backup/backup.env`, `scripts/backup/setup-backup.sh`, `scripts/backup/agent-backup.sh`, `scripts/backup/restore-test.sh`, units `agent-backup` and `agent-backup-check` with their timers.
+
+Checked offline (a test repository as the owner): the snapshot held the memory file, the memory snapshot and the personal session; a planted file naming a work identifier, the work session, the secrets and the `.env` stayed out; forget, prune and check passed.
+
+Check (owner): the first snapshot; `restore-test.sh` finds the restored files identical; a planted work name is left out; the weekly check passes; a copy of the repository password kept outside the machine.
+
+## Increment 12: Phase 1 review
+
+Dates: 2026-10-27 (kit).
+
+Brief: a check, not a build. Five real tasks in the work codebase, done by hand in the opencode window because the automatic edit flow (6c) is deferred, at least 3 passing their tests; a real GPU campaign with the model server stopped by hand and started again afterwards, without an out-of-memory kill; the median email round trip under 60 s, or a recorded decision; no model call outside this machine; nothing from `~/agent-data` in the repository. Decision at the end: which slice to deepen.
+
+Build: `scripts/review/round-trips.py`, `scripts/review/phase1-check.sh`, `docs/phase1-validation.md` (every check of increments 8 to 12 with its command and expected result), a private task sheet.
+
+Checked offline: `round-trips.py` on a stand-in store (two answers of 60 and 10 s; an unanswered message and a scheduled session ignored); the private-file comparison as the owner: 64,341 private files against 70 tracked files, one identical, the public decision record of increment 1, which is also kept in the private documents folder.
+
+## Validation of increments 8 to 11 (2026-10-27)
+
+The owner ran the five install steps between 13:10 and 13:15 and started the model server; the checks below are from the services' logs and the filed data.
+
+- Install: one failure. The filing job of step 2 could not write into its folders: `install -d -o <owner>` gives the owner only the last folder of a path and leaves the parents it creates to root. `enable-memory.sh` now creates the folders as the owner and gives back any that an earlier run left to root; the second run passed.
+- Filing: 1 email session (41 messages, untagged, so work) and 29 opencode sessions (27 work, 2 personal). Seven of the 29 opencode exports were cut off at a multiple of 32 KiB: `opencode export` can lose the end of its output through a pipe when it exits (two of three pipe runs of one session stopped at 131,072 bytes; three of three runs into a file were complete, 139,528 bytes). The collector now has opencode write into a file, checks the JSON, retries once, and exports again any filed session that does not parse; the seven were repaired, and all 29 parse.
+- Memory: the seed is in place (6 and 5 entries). The email test of the seed and of three facts ran from 13:20 to 13:25; the files are read after the next nightly copy. The prefix-cache hit rate during the session rose to 80.1%.
+- Web: SearXNG and the fetch service ran with the gateway. Searches returned 22 and 24 results, and the agent read the restic releases page (51,062 characters) to answer a question. `agentweb` was refused 10 UDP packets to port 443 of a CDN (HTTP/3 attempts, after which the client used TCP); `hermes` was refused only Hermes' start-up calls to GitHub's raw-content servers and parallel.ai. SearXNG logged no CAPTCHA or suspension.
+- Backup: the first snapshot at 13:15. Sixteen files were left out for naming a work identifier: 14 research documents and the 2 personal opencode sessions, which discuss the work harness. None of the memory files were left out.
+
+Open: the nightly review over seven nights; the search engines over one week, and nine more web questions with their citations checked; the three facts in the files, the recall test after `/new`, and one memory revert; the restore test, the planted work name and the weekly check; a copy of the backup password outside the machine; increment 12's review (five coding tasks, a GPU campaign, `phase1-check.sh`).

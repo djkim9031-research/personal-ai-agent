@@ -12,6 +12,11 @@ It is built one increment at a time. `DEVLOG.md` records what each increment bui
 - `config/systemd/`: the service definition templates: the model server, the email gateway and its egress rules
 - `scripts/serve/`: install, download, service setup, check and ask scripts for the model server
 - `config/hermes/`, `config/nftables/`, `scripts/shell/`: the personal shell over email: pins, settings, the mail variables' names, the egress rules, and the install, start and check scripts
+- `config/agent-memory/`, `scripts/agent-memory/`: the agent's memory: seed templates, the nightly memory commit and session export, the check
+- `config/hermes/skills/nightly-review/`, `scripts/dream/`: the nightly review of the day's conversations
+- `config/web/`, `scripts/web/`, `config/hermes/plugins/web/agentweb/`: web search and page reading through a local service
+- `config/backup/`, `scripts/backup/`: encrypted backups and the restore test
+- `scripts/review/`, `docs/phase1-validation.md`: the Phase 1 review: evidence script, round trips, every validation step
 - `config/opencode/`: the coding harness's pinned release, its settings, the working rules every session reads and the subagent prompts
 - `scripts/harness/`: install and start scripts for the harness, the recording proxy, the twenty-step test, its scorer, the replay, the repo-facts test, the step-by-step question runner and a stand-in model server for checks without the GPU
 - `skills/`: templates for skill folders; filled-in copies live outside the repository
@@ -97,6 +102,26 @@ The gateway starts and stops with the model server. `sudo systemctl start agent-
     systemctl status agent-hermes          # the gateway
     sudo journalctl -u agent-hermes -f     # its log
     sudo scripts/shell/check-shell.sh      # what the gateway sees, what hermes can read, the sandbox from inside, the egress counters
+
+## Memory, nightly review, web research and backups
+
+Set up after the personal shell, in this order; each step prints what it did:
+
+    sudo scripts/agent-memory/seed-memory.sh       # USER.md and MEMORY.md from the private seed folder, with git history
+    sudo scripts/agent-memory/enable-memory.sh     # nightly memory commit and session export (02:30), filing into ~/agent-data (02:45)
+    sudo scripts/dream/enable-dreaming.sh    # the nightly review at 03:00, its report by email
+    sudo scripts/web/setup-web.sh            # SearXNG and the fetch service under the agentweb user
+    sudo scripts/backup/setup-backup.sh      # encrypted backups on /var at 04:00, a weekly check
+
+- **Memory.** `USER.md` (about the owner) and `MEMORY.md` (the agent's notes) are read when a session starts; a reply starting with `/new` starts one. Every save waits for `/memory approve all`; `/memory pending` lists them. Each night the notes are committed to git in hermes' memory folder, and the sessions are filed under `~/agent-data/trajectories/<work|personal>/`: an email session is personal only when its first message carries `[personal]`.
+- **Nightly review.** A Hermes job reads the day's sessions and proposes at most six changes to the notes, each quoting the owner's own words, for approval; the report arrives by email. It runs while the model server runs, or once at its next start.
+- **Web research.** The agent searches through a local SearXNG and reads only pages its searches returned in the last 24 hours, from public addresses only. The fetch service and SearXNG run as their own user; the agent's user reaches only the fetch service.
+- **Backups.** restic snapshots of the memory, the agent's configuration and the personal agent data, encrypted, on `/var`. Work-scope data, secrets and any text file naming a work identifier stay out. `sudo scripts/backup/restore-test.sh` restores the newest snapshot and compares it.
+
+    sudo scripts/agent-memory/check-memory.sh      # the notes as the next session sees them, their history, what was filed
+    sudo scripts/review/phase1-check.sh 7    # evidence for the Phase 1 review, over the last 7 days
+
+`docs/phase1-validation.md` lists every validation step with its expected result.
 
 ## License
 
