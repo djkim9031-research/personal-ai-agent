@@ -1,0 +1,62 @@
+# Template for /etc/systemd/system/agent-hermes.service, rendered by
+# scripts/shell/enable-shell.sh, which fills in the @...@ values.
+# The Hermes gateway runs only while the model server runs: starting
+# agent-vllm starts it (WantedBy), once agent-vllm is active, which is when the
+# model answers; stopping or losing agent-vllm stops it first (BindsTo, After).
+# While it is stopped nothing reads the mailbox, and on each start Hermes skips
+# the mail already there.
+[Unit]
+Description=Personal agent shell (Hermes gateway), only while agent-vllm runs
+BindsTo=agent-vllm.service
+After=agent-vllm.service network-online.target user@@UID@.service
+Wants=network-online.target user@@UID@.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=@HERMES_HOME@
+Environment=HOME=@HERMES_HOME@ USER=hermes LOGNAME=hermes
+Environment=HERMES_HOME=@HERMES_HOME@/.hermes HERMES_SUPERVISED_CHILD=1
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@ DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/@UID@/bus
+Environment=DOCKER_HOST=unix:///run/user/@UID@/docker.sock
+Environment=PATH=@HERMES_HOME@/.local/bin:@HERMES_HOME@/bin:/usr/local/bin:/usr/bin:/bin
+# Waits for the model and hermes' Docker daemon; mail is read only after this.
+ExecStartPre=@REPO@/scripts/shell/wait-ready.sh
+ExecStart=@HERMES_HOME@/.local/bin/hermes gateway run
+# "Agent online" once the mailbox baseline is taken; "Agent offline" after a stop.
+ExecStartPost=-@REPO@/scripts/shell/mail-notice.py online
+ExecStopPost=-@REPO@/scripts/shell/mail-notice.py offline
+Restart=always
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStartSec=10min
+# Above agent.restart_drain_timeout (120 s), so a run being drained is not killed.
+TimeoutStopSec=180
+StandardOutput=journal
+StandardError=journal
+UMask=0077
+
+# /home and /run/user look empty except hermes' own home, its runtime
+# directory (Docker socket) and the helper scripts, so the gateway cannot read
+# the owner's files; the model's commands run in Docker. ProtectHome=tmpfs
+# also covers /run/user, so the runtime directory needs BindPaths, not
+# ReadWritePaths (which fails with status 226/NAMESPACE).
+ProtectHome=tmpfs
+BindPaths=@HERMES_HOME@ /run/user/@UID@
+BindReadOnlyPaths=@REPO@/scripts/shell
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+
+[Install]
+WantedBy=agent-vllm.service

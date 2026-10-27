@@ -1,0 +1,40 @@
+# Applied in order by scripts/shell/install-hermes.sh with `hermes config set KEY VALUE`.
+# One setting per line: the key, a space, the value (YAML for lists).
+
+# The local model server; no other provider is configured.
+model.provider custom
+model.base_url http://127.0.0.1:8000/v1
+model.default local-primary
+model.context_length 131072
+# The server's template takes xhigh, medium or low; Hermes's default is medium.
+agent.reasoning_effort xhigh
+# On stop, let the run in progress finish for up to 2 minutes (default: cut at once).
+agent.restart_drain_timeout 120
+# Never borrow other programs' logins.
+auth.adopt_external_logins false
+
+# Nothing reported or checked online.
+telemetry.shared_metrics.enabled false
+telemetry.shared_metrics.send false
+updates.check false
+web.keyless_fallback false
+web.keyless_rescue false
+
+# Commands run in a rootless Docker container with no network and no host folders.
+terminal.backend docker
+terminal.docker_network false
+terminal.docker_forward_env []
+terminal.docker_mount_cwd_to_workspace false
+terminal.container_cpu 2
+terminal.container_memory 4096
+terminal.container_disk 10240
+terminal.container_persistent true
+
+# Memory and skill writes wait for the owner's approval.
+memory.write_approval true
+skills.write_approval true
+delegation.max_concurrent_children 2
+
+# Tools offered over email: no web, browser, code execution on the host, image
+# generation, speech, schedules or computer use.
+platform_toolsets.email [terminal, file, vision, memory, todo, session_search, skills, delegation]

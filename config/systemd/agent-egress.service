@@ -1,0 +1,16 @@
+# Installed as /etc/systemd/system/agent-egress.service by scripts/shell/enable-shell.sh.
+# Loads the hermes user's egress allowlist at boot; stopping it removes the
+# allowlist (only for installs and updates of the shell).
+[Unit]
+Description=Egress allowlist for the agent's hermes user
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/agent-egress.nft
+ExecStop=/usr/sbin/nft delete table inet agent_egress
+
+[Install]
+WantedBy=multi-user.target

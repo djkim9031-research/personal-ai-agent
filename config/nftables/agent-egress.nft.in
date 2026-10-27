@@ -1,0 +1,33 @@
+#!/usr/sbin/nft -f
+# Template for /etc/agent-egress.nft, rendered by scripts/shell/enable-shell.sh,
+# which fills in @UID@ (the hermes user). Connections that user may open: the
+# model server and the local resolver on loopback, and the two mail ports.
+# Everything else from it is counted, logged (10 a minute at most) and refused.
+# Only packets from sockets that a program of that user opened enter the hermes
+# chain. The kernel's own packets (network-drive mounts, resets, ICMP errors,
+# closing connections) have no such socket, so no skuid rule matches them:
+# with "skuid != uid accept" they fell through to the refusal. Never enable
+# nftables.service on this machine: it would flush the ruleset, including ufw's.
+table inet agent_egress
+delete table inet agent_egress
+
+table inet agent_egress {
+    counter model {}
+    counter dns {}
+    counter mail {}
+    counter refused {}
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+        meta skuid @UID@ jump hermes
+    }
+
+    chain hermes {
+        ct state established,related accept
+        oif "lo" ip daddr 127.0.0.1 tcp dport 8000 counter name model accept
+        oif "lo" ip daddr 127.0.0.53 meta l4proto { tcp, udp } th dport 53 counter name dns accept
+        oif != "lo" tcp dport { 465, 993 } counter name mail accept
+        limit rate 10/minute log prefix "agent-egress refused: " level info
+        counter name refused reject
+    }
+}
