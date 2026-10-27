@@ -16,6 +16,17 @@ if [ ! -x "$bin" ]; then
 fi
 export OPENCODE_CONFIG="${OPENCODE_CONFIG:-$repo/config/opencode/opencode.json}"
 export AGENT_REPO="$repo"   # the settings name config/opencode/AGENTS.md through it
+# The project's notes and the owner's profile, loaded by the settings into every session;
+# agent-notes is on PATH for /remember and recall. Measurement runs set AGENT_NO_NOTES.
+notes_cli="$repo/scripts/opencode-memory/agent-notes.py"
+if [ -z "${AGENT_NO_NOTES:-}" ] && project_notes=$(python3 -I "$notes_cli" path "$PWD" 2>/dev/null); then
+    export AGENT_PROJECT_NOTES="$project_notes"
+    AGENT_USER_PROFILE=$(python3 -I "$notes_cli" profile)
+    export AGENT_USER_PROFILE
+    export PATH="$repo/scripts/opencode-memory/bin:$PATH"
+    waiting=$(python3 -I "$notes_cli" pending "$PWD")
+    [ "$waiting" = 0 ] || echo "agent-notes: $waiting note proposals wait for this project; review them with: agent-notes review" >&2
+fi
 export OPENCODE_DISABLE_MODELS_FETCH=true
 export OPENCODE_DISABLE_AUTOUPDATE=true
 export OPENCODE_DISABLE_LSP_DOWNLOAD=true

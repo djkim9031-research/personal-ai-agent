@@ -50,6 +50,15 @@
       "*.key": "deny",
       "*id_rsa*": "deny",
       "*id_ed25519*": "deny"
+    },
+    "bash": {
+      "*": "allow",
+      "agent-notes add *": "ask",
+      "agent-notes replace *": "ask",
+      "agent-notes remove *": "ask",
+      "agent-notes undo*": "ask",
+      "agent-notes review*": "deny",
+      "agent-notes dream*": "deny"
     }
   },
   "skills": {
@@ -58,7 +67,9 @@
     ]
   },
   "instructions": [
-    "{env:AGENT_REPO}/config/opencode/AGENTS.md"
+    "{env:AGENT_REPO}/config/opencode/AGENTS.md",
+    "{env:AGENT_PROJECT_NOTES}",
+    "{env:AGENT_USER_PROFILE}"
   ],
   "agent": {
     "explore": {
@@ -102,6 +113,11 @@
     "ask": {
       "description": "answer a question in four steps: narrow questions, one explore subagent each, verify, compose",
       "template": "Answer the question at the end in four steps and show each step. 1. Write the narrow factual questions behind it, 3 to 12, each answerable by one command or one file. 2. For each question call the task tool with subagent_type \"explore\" and that question alone; keep its evidence table. 3. Call the task tool with subagent_type \"verify\" with the numbered question and answer pairs and the project directory; show its verdict table. 4. Write the answer from the verified pairs only, citing them by number; where the pairs do not cover a part of the question, write \"not checked\". Question: $ARGUMENTS"
+    },
+    "remember": {
+      "description": "save one fact about this project to its notes (asks you before writing)",
+      "agent": "build",
+      "template": "Save one fact about this project to its notes. The owner is telling you this fact: save it as given, without checking it first, unless the files clearly contradict it (then say what you found instead). Rewrite it as one short sentence that stands on its own: name the file, command or component instead of writing 'it' or 'this'. Then run exactly one command: agent-notes add \"<the sentence>\" . The owner is asked to approve that command before it runs. Do not edit any file. If the command answers that the entry is already there or the notes are full, tell the owner and stop.\n\nFact: $ARGUMENTS"
     }
   }
 }

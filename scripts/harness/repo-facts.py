@@ -111,6 +111,10 @@ def prepare_config(path, proxy_port, dest, strip=(), effort=None, agent="plan"):
             "none" if effort == "off" else effort)
     for prov in cfg.get("provider", {}).values():
         prov.setdefault("options", {})["baseURL"] = f"http://127.0.0.1:{proxy_port}/v1"
+    # Runs here are headless: a command rule that asks (writing the owner's notes) would end one.
+    bash = cfg.get("permission", {}).get("bash")
+    if isinstance(bash, dict):
+        cfg["permission"]["bash"] = {k: "deny" if v == "ask" else v for k, v in bash.items()}
     json.dump(cfg, open(dest, "w"), indent=1)
     return dest
 
@@ -311,7 +315,8 @@ def main():
             rec, runs = os.path.join(out, "recording", tag), os.path.join(out, "runs", tag)
             os.makedirs(rec)
             os.makedirs(runs)
-            env = dict(os.environ)
+            env = {k: v for k, v in os.environ.items() if k not in ("AGENT_PROJECT_NOTES", "AGENT_USER_PROFILE")}
+            env["AGENT_NO_NOTES"] = "1"  # a measurement: no notes or profile from the launcher
             env.update(make_xdg(os.path.join(out, "xdg", name)))
             env["OPENCODE_CONFIG"] = prepare_config(path, a.proxy_port, os.path.join(out, f"opencode.{name}.json"),
                                                     strip_keys if strip else (("skills",) if a.no_skills else ()),

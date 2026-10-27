@@ -125,6 +125,11 @@ def deep_merge(a, b):
     return out
 
 
+# Runs here are measurements: the launcher leaves out the owner's notes and profile.
+NO_NOTES_ENV = {**{k: v for k, v in os.environ.items() if k not in ("AGENT_PROJECT_NOTES", "AGENT_USER_PROFILE")},
+                "AGENT_NO_NOTES": "1"}
+
+
 def settings(dest, server=None, strip=(), headless=True):
     """A copy of the settings without the keys named in strip, pointed at another server when given.
 
@@ -143,6 +148,10 @@ def settings(dest, server=None, strip=(), headless=True):
         for prov in cfg.get("provider", {}).values():
             prov.setdefault("options", {})["baseURL"] = base if base.endswith("/v1") else base + "/v1"
     if headless:
+        # A command rule that asks (writing the owner's notes) ends a headless run: deny it there.
+        bash = cfg.get("permission", {}).get("bash")
+        if isinstance(bash, dict):
+            cfg["permission"]["bash"] = {k: "deny" if v == "ask" else v for k, v in bash.items()}
         outside = {"*": "deny", **{p: "allow" for p in allowed}}
         cfg = deep_merge(cfg, {"permission": {"doom_loop": "deny", "external_directory": outside},
                                "experimental": {"continue_loop_on_deny": True}})
@@ -416,7 +425,7 @@ def run_flow(name, flow, ctx, a):
                 lane = lanes.take(job["lane"])
                 try:
                     r = launch(job["iid"], node, job["prompt"], job["session"], job["title"],
-                               dict(os.environ, **lanes.env[lane], OPENCODE_CONFIG=cfg[node["skills"]]), a, steps_dir, procs)
+                               dict(NO_NOTES_ENV, **lanes.env[lane], OPENCODE_CONFIG=cfg[node["skills"]]), a, steps_dir, procs)
                 finally:
                     lanes.give(lane)
                 r["lane"] = lane

@@ -18,7 +18,7 @@ list=$ad/hermes/work-patterns.txt
 
 include=()
 for p in "$hh/memories" "$hh/config.yaml" "$hh/SOUL.md" "$hh/skills" "$hh/plugins" "$hh/cron/jobs.json" \
-         "$ad/memory" "$ad/trajectories/personal" "$ad/hermes" "$ad/docs"; do
+         "$ad/memory" "$ad/trajectories/personal" "$ad/hermes" "$ad/docs" "$ad/opencode/notes/personal"; do
     [ -e "$p" ] && include+=("$p")
 done
 work=$(mktemp)

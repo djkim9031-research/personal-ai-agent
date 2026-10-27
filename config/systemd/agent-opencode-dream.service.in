@@ -1,0 +1,26 @@
+# Template for /etc/systemd/system/agent-opencode-dream.service, rendered by
+# scripts/opencode-memory/enable-notes.sh. The nightly review of the coding
+# agent's sessions, as the owner: proposals for each project's notes, waiting
+# for `agent-notes review`. Runs at 03:30 and each time the model server
+# starts; without the model it does nothing and runs at the next start. It may
+# reach only the model server.
+[Unit]
+Description=Nightly review of the coding agent's sessions (opencode notes proposals)
+After=agent-vllm.service agent-trajectories.service
+
+[Service]
+Type=oneshot
+User=@OWNER_UID@
+Group=@OWNER_GID@
+Environment=HOME=@OWNER_HOME@
+ExecStart=/usr/bin/python3 -I @REPO@/scripts/opencode-memory/agent-notes.py dream
+TimeoutStartSec=2h
+Nice=10
+IPAddressAllow=localhost
+IPAddressDeny=any
+ProtectSystem=full
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=agent-vllm.service
