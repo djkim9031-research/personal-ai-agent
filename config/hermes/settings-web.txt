@@ -1,0 +1,3 @@
+web.search_backend searxng
+web.extract_backend agentweb
+platform_toolsets.email [terminal, file, vision, memory, todo, session_search, skills, delegation, web]

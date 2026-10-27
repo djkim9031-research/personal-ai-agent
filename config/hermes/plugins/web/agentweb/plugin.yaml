@@ -1,0 +1,7 @@
+name: web-agentweb
+version: 1.0.0
+description: "Page reading through the local agent-web service: only pages a search returned in the last 24 hours, only public addresses. Search itself goes through the searxng provider pointed at the same service."
+author: personal-ai-agent
+kind: backend
+provides_web_providers:
+  - agentweb

@@ -1,0 +1,37 @@
+# SearXNG settings for the agent's local search (increment 10), installed as
+# /var/lib/agentweb/settings.yml by scripts/web/setup-web.sh. Loopback only, no
+# metrics, JSON output for the agent's fetch service. Six engines: Bing is
+# switched on (off in SearXNG's defaults); DuckDuckGo is left out, it answers
+# this office's address with a CAPTCHA. The secret key comes from the unit's
+# environment (SEARXNG_SECRET), not from this file.
+use_default_settings:
+  engines:
+    keep_only:
+      - brave
+      - bing
+      - wikipedia
+      - arxiv
+      - github
+      - stackoverflow
+general:
+  instance_name: "agent search"
+  enable_metrics: false
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+server:
+  bind_address: "127.0.0.1"
+  port: 8888
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 12.0
+engines:
+  - name: bing
+    disabled: false

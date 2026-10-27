@@ -1,0 +1,37 @@
+# Template for /etc/systemd/system/agent-web.service, rendered by
+# scripts/web/setup-web.sh. The agent's fetch service on 127.0.0.1:8889, as the
+# agentweb user; starts and stops with the gateway. It sees only its own home
+# and its script.
+[Unit]
+Description=Agent web service: search results only, public addresses only (agentweb user)
+PartOf=agent-hermes.service
+After=agent-searxng.service agent-web-egress.service
+Wants=agent-searxng.service
+Requires=agent-web-egress.service
+
+[Service]
+Type=simple
+User=agentweb
+Group=agentweb
+WorkingDirectory=@WEB_HOME@
+Environment=HOME=@WEB_HOME@ AGENTWEB_LISTEN=127.0.0.1:8889 SEARXNG=http://127.0.0.1:8888 AGENTWEB_STATE=@WEB_HOME@/results.json
+ExecStart=/usr/bin/python3 -I @REPO@/scripts/web/agent-web.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+ProtectHome=tmpfs
+BindReadOnlyPaths=@REPO@/scripts/web
+ProtectSystem=strict
+ReadWritePaths=@WEB_HOME@
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+
+[Install]
+WantedBy=agent-hermes.service

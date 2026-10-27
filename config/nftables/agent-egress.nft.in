@@ -1,7 +1,8 @@
 #!/usr/sbin/nft -f
 # Template for /etc/agent-egress.nft, rendered by scripts/shell/enable-shell.sh,
 # which fills in @UID@ (the hermes user). Connections that user may open: the
-# model server and the local resolver on loopback, and the two mail ports.
+# model server, the local web service (search results only, increment 10) and
+# the local resolver on loopback, and the two mail ports.
 # Everything else from it is counted, logged (10 a minute at most) and refused.
 # Only packets from sockets that a program of that user opened enter the hermes
 # chain. The kernel's own packets (network-drive mounts, resets, ICMP errors,
@@ -13,6 +14,7 @@ delete table inet agent_egress
 
 table inet agent_egress {
     counter model {}
+    counter web {}
     counter dns {}
     counter mail {}
     counter refused {}
@@ -25,6 +27,7 @@ table inet agent_egress {
     chain hermes {
         ct state established,related accept
         oif "lo" ip daddr 127.0.0.1 tcp dport 8000 counter name model accept
+        oif "lo" ip daddr 127.0.0.1 tcp dport 8889 counter name web accept
         oif "lo" ip daddr 127.0.0.53 meta l4proto { tcp, udp } th dport 53 counter name dns accept
         oif != "lo" tcp dport { 465, 993 } counter name mail accept
         limit rate 10/minute log prefix "agent-egress refused: " level info

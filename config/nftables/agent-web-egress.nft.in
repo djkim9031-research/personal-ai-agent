@@ -1,0 +1,38 @@
+#!/usr/sbin/nft -f
+# Template for /etc/agent-web-egress.nft, rendered by scripts/web/setup-web.sh,
+# which fills in @WEB_UID@ (the agentweb user: SearXNG and the agent's fetch
+# service). Connections that user may open: the two local services, the local
+# resolver, and web ports 80 and 443 on public addresses only, so a page the
+# agent reads cannot lead to this machine or the office network. Everything
+# else from it is counted, logged (10 a minute at most) and refused. Only
+# packets from sockets that a program of that user opened enter the chain.
+table inet agent_web_egress
+delete table inet agent_web_egress
+
+table inet agent_web_egress {
+    counter local {}
+    counter dns {}
+    counter web {}
+    counter refused {}
+
+    set nonpublic {
+        type ipv4_addr
+        flags interval
+        elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16,
+                     172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/3 }
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+        meta skuid @WEB_UID@ jump agentweb
+    }
+
+    chain agentweb {
+        ct state established,related accept
+        oif "lo" ip daddr 127.0.0.1 tcp dport { 8888, 8889 } counter name local accept
+        oif "lo" ip daddr 127.0.0.53 meta l4proto { tcp, udp } th dport 53 counter name dns accept
+        oif != "lo" ip daddr != @nonpublic tcp dport { 80, 443 } counter name web accept
+        limit rate 10/minute log prefix "agent-web refused: " level info
+        counter name refused reject
+    }
+}

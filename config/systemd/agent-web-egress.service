@@ -1,0 +1,13 @@
+[Unit]
+Description=Egress allowlist for the agentweb user (search and page reading)
+After=network-pre.target
+Before=agent-searxng.service agent-web.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/agent-web-egress.nft
+ExecStop=/usr/sbin/nft delete table inet agent_web_egress
+
+[Install]
+WantedBy=multi-user.target
