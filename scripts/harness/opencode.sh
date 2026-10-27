@@ -15,6 +15,7 @@ if [ ! -x "$bin" ]; then
     exit 1
 fi
 export OPENCODE_CONFIG="${OPENCODE_CONFIG:-$repo/config/opencode/opencode.json}"
+export OPENCODE_TUI_CONFIG="${OPENCODE_TUI_CONFIG:-$repo/config/opencode/tui.json}"   # the window's graph panel
 export AGENT_REPO="$repo"   # the settings name config/opencode/AGENTS.md through it
 # The project's notes and the owner's profile, loaded by the settings into every session;
 # agent-notes is on PATH for /remember and recall. Measurement runs set AGENT_NO_NOTES.

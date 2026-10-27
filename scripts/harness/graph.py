@@ -5,8 +5,8 @@ A model node names its agent, prompt, session, thinking effort, skills and budge
 filled from the outputs of earlier nodes, which is the edge between them. A fan-out node runs once
 per item of an earlier node's list, several at a time, each process in a private opencode home of
 its own. Every run leaves its events, tokens and status under steps/, graph.json holds the hashes
-that let --resume reuse what has not changed, and nodes.jsonl holds one line per run for later
-mining. Standard library only.
+that let --resume reuse what has not changed and the live state of every step (the window's graph
+panel reads it), and nodes.jsonl holds one line per run for later mining. Standard library only.
 """
 import concurrent.futures
 import datetime
@@ -100,13 +100,24 @@ def cells_of(line):
     return [c.strip().replace("\\|", "|") for c in CELL.split(line.strip().strip("|"))]
 
 
+HOP = re.compile(r"(\d+)\s*(?:\.\s*\(?|\()(\d+)\)?\.?$")  # 8.1, 8.1., 9(1), 9 (1), 9.(1)
+
+
 def table_rows(text):
-    """The verifier's table: claim number (as text) -> verdict, evidence, correction."""
-    rows = {}
+    """The verifier's table: claim number (as text) -> verdict, evidence, correction. A hop chain checked
+    in rows 8.1, 8.2, ... (or 8(1), 8(2), ...) becomes one row by the rule of prompts/verify.md: correct only if every hop is,
+    wrong (or unverifiable) only if every hop is, partly otherwise; the correction names the first hop
+    that is not correct. A row for the whole claim wins over its hop rows."""
+    rows, hops = {}, {}
     for line in text.splitlines():
         if not line.strip().startswith("|"):
             continue
         cells = cells_of(line)
+        h = HOP.match(cells[0]) if cells else None
+        if h and len(cells) >= 3:
+            v = verdict_of(cells[2]) or next((verdict_of(c) for c in cells[1:] if verdict_of(c)), "unparsed")
+            hops.setdefault(h.group(1), []).append((int(h.group(2)), v, cells[4] if len(cells) > 4 else ""))
+            continue
         m = re.match(r"(\d+)\.?(?:\s+(.+))?$", cells[0]) if cells else None
         if m:  # the number may share its cell with the claim, or carry a dot
             cells = [m.group(1)] + ([m.group(2)] if m.group(2) else []) + cells[1:]
@@ -115,6 +126,16 @@ def table_rows(text):
         verdict = verdict_of(cells[2]) or next((verdict_of(c) for c in cells[1:] if verdict_of(c)), "unparsed")
         rows[cells[0]] = {"verdict": verdict, "evidence": cells[3] if len(cells) > 3 else "",
                           "correction": cells[4] if len(cells) > 4 else ""}
+    for n, items in hops.items():
+        if n in rows:
+            continue
+        items.sort()
+        kinds = {v for _, v, _ in items}
+        only = kinds.pop() if len(kinds) == 1 else None
+        verdict = only if only in ("correct", "wrong", "unverifiable", "unparsed") else "partly"
+        bad = next(((k, v, c) for k, v, c in items if v != "correct"), None)
+        rows[n] = {"verdict": verdict, "evidence": f"checked hop by hop, {len(items)} hops",
+                   "correction": f"hop {bad[0]} is {bad[1]}" + (f": {bad[2]}" if bad[2] else "") if bad else ""}
     return rows
 
 
@@ -239,6 +260,10 @@ def in_tools(value, outputs):
     return bool(v) and any(v in o.lower() for o in outputs)
 
 
+def now():
+    return datetime.datetime.now().isoformat(timespec="seconds")
+
+
 def kill(p, sig):
     try:
         os.killpg(p.pid, sig)
@@ -246,7 +271,7 @@ def kill(p, sig):
         pass
 
 
-def launch(iid, node, prompt, session, title, env, a, steps_dir, procs):
+def launch(iid, node, prompt, session, title, env, a, steps_dir, procs, on_tool=None):
     """One opencode run, its events read as they arrive; stopped at the tool cap or the timeout."""
     cmd = [LAUNCHER, "run", "--dir", a.project, "--format", "json", "--variant", node["variant"], "--agent", node["agent"]]
     cmd += ["--session", session] if session else ["--title", title]
@@ -288,6 +313,8 @@ def launch(iid, node, prompt, session, title, env, a, steps_dir, procs):
                 state = part.get("state") or {}
                 r["errors"] += state.get("status") == "error"
                 r["tool_names"].append(part.get("tool") or "")
+                if on_tool:
+                    on_tool(r["tools"])
                 if isinstance(state.get("output"), str):
                     r["tool_outputs"].append(state["output"][:20000])
                 if r["tools"] > node["max_tools"]:
@@ -325,7 +352,9 @@ def run_flow(name, flow, ctx, a):
     os.makedirs(steps_dir, exist_ok=True)
     gpath = os.path.join(out, "graph.json")
     old = (json.load(open(gpath)).get("nodes") or {}) if a.resume and os.path.isfile(gpath) else {}
-    graph = {"flow": name, "question": ctx.get("question"), "nodes": {}}
+    graph = {"flow": name, "question": ctx.get("question"), "state": "running", "started": now(),
+             "stages": [{"id": s["id"], "kind": s.get("kind", "model"), "fanout": bool(s.get("fanout"))}
+                        for s in flow["nodes"]], "nodes": {}}
     cfg = {True: settings(os.path.join(out, "opencode.json"), a.server, ("skills",) if a.no_skills else ()),
            False: settings(os.path.join(out, "opencode.noskills.json"), a.server, ("skills",))}
     lanes = Lanes(os.path.join(out, "xdg"), a.concurrency)
@@ -339,15 +368,36 @@ def run_flow(name, flow, ctx, a):
 
     if threading.current_thread() is threading.main_thread():
         signal.signal(signal.SIGTERM, interrupt)
-    state = {"dirty": False, "alone": True}
+    state = {"dirty": False, "alone": True, "written": 0.0}
+
+    def write():
+        """graph.json, replaced whole so that a reader never sees half a file; called under the lock."""
+        with open(gpath + ".tmp", "w") as f:
+            json.dump(graph, f, indent=1)
+        os.replace(gpath + ".tmp", gpath)
+        state["written"] = time.time()
 
     def save(r):
         rec = {k: v for k, v in r.items() if k != "tool_outputs"}
         json.dump(rec, open(os.path.join(steps_dir, f"{r['id']}.json"), "w"), indent=1)
         with lock:
             graph["nodes"][r["id"]] = {k: r.get(k) for k in ("node", "kind", "status", "spec_hash", "inputs_hash", "lane",
-                                                            "session", "seconds")}
-            json.dump(graph, open(gpath, "w"), indent=1)
+                                                            "session", "seconds", "start", "tools")}
+            write()
+
+    def mark(iid, nid, **fields):
+        """The live state of a run before it ends: waiting, then running with its tool calls, written at
+        most once a second unless the status changes."""
+        with lock:
+            rec = graph["nodes"].get(iid) or {"node": nid, "kind": "model"}
+            if rec.get("status") not in (None, "waiting", "running"):
+                return
+            graph["nodes"][iid] = {**rec, **fields}
+            if "status" in fields or time.time() - state["written"] >= 1:
+                write()
+
+    with lock:
+        write()
 
     def reusable(iid, spec_hash, inputs_hash):
         o = old.get(iid)
@@ -420,12 +470,15 @@ def run_flow(name, flow, ctx, a):
                     save(results[job["iid"]])
                 else:
                     pending.append(job)
+                    mark(job["iid"], nid, status="waiting")
 
             def do(job):
                 lane = lanes.take(job["lane"])
+                mark(job["iid"], nid, status="running", start=now(), tools=0)
                 try:
                     r = launch(job["iid"], node, job["prompt"], job["session"], job["title"],
-                               dict(NO_NOTES_ENV, **lanes.env[lane], OPENCODE_CONFIG=cfg[node["skills"]]), a, steps_dir, procs)
+                               dict(NO_NOTES_ENV, **lanes.env[lane], OPENCODE_CONFIG=cfg[node["skills"]]), a, steps_dir, procs,
+                               on_tool=lambda n, iid=job["iid"]: mark(iid, nid, tools=n))
                 finally:
                     lanes.give(lane)
                 r["lane"] = lane
@@ -447,9 +500,19 @@ def run_flow(name, flow, ctx, a):
                             results[r["id"]] = r
                 state["dirty"] = True
             expose(node, [results[j["iid"]] for j in jobs])
+        graph["state"] = "done"
+    except KeyboardInterrupt:
+        graph["state"] = "stopped"
+        raise
+    except BaseException:
+        graph["state"] = "failed"
+        raise
     finally:
         for p in list(procs):
             kill(p, signal.SIGTERM)
+        with lock:
+            graph["ended"] = now()
+            write()
     return results, ctx
 
 

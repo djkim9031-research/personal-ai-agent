@@ -1,0 +1,43 @@
+"""A graph of your own for ask.py and the window: fact questions only, each answered in a fresh session,
+checked by the verifier, then composed into the answer. No mechanism chains, so it is faster than narrow.
+
+Copy to ~/agent-data/flows/facts.py (any name ending in .py); every FLOWS entry there becomes a mode:
+    scripts/harness/ask.py --project DIR --mode facts --dry-run "question"    # prints the graph
+    scripts/harness/ask.py --project DIR --scope personal --mode facts "question"
+and, from the window, a command whose text holds <mode>facts</mode> (README, "Your own graphs").
+
+A flow is a list of nodes run in order. A model node is one opencode run: agent "answer" or "checker",
+a prompt filled from {question}, {item} (one item of a fan-out), {n} (--max-questions) and the outputs
+of earlier nodes ({decompose_text} is a node's raw text), a parse rule (answer_line, numbered,
+verdict_table), a tool-call cap. fanout="split.facts" runs the node once per item of that list,
+four at a time. A code node runs a Python function over the outputs (kind="code", fn, inputs).
+when=... skips a node. The pieces imported below are the narrow flow's, in scripts/harness/ask_flows.py.
+"""
+from ask_flows import COMPOSE, FACTS, N, VERIFY, fact_lines, merged, narrow_table, pair_batches, pairs, two_lists
+
+QUESTIONS = """Do not answer the question below yet. Write between 3 and {n} narrow questions whose answers, taken together, answer it, each one answered by one command or one file: a count, a name, a path, a quoted line, a yes or no. Number them from 1., one question per line, and write nothing after the list.
+
+Question: {question}"""
+
+FLOWS = {
+    "facts": {
+        "nodes": [
+            N(id="decompose", agent="answer", prompt=QUESTIONS, max_tools=20),
+            N(id="split", kind="code", fn=two_lists, inputs=("decompose",)),
+            N(id="q", agent="answer", prompt="{item}" + FACTS.SUFFIX, fanout="split.facts", max_tools=20,
+              parse="answer_line"),
+            N(id="pairs", kind="code", fn=pairs, inputs=("split", "q")),
+            N(id="batches", kind="code", fn=pair_batches, inputs=("pairs",)),
+            N(id="verify", agent="checker", prompt=VERIFY, fanout="batches", skills=False, max_tools=40,
+              parse="verdict_table"),
+            N(id="verdicts", kind="code", fn=merged, inputs=("verify",)),
+            N(id="facts", kind="code", fn=fact_lines, inputs=("pairs", "verdicts")),
+            N(id="table", kind="code", fn=narrow_table, inputs=("pairs", "verdicts")),
+            N(id="compose", agent="answer", prompt=COMPOSE, max_tools=10, when=lambda c: bool(c.get("pairs"))),
+        ],
+        # which node's text is the answer (the first that has one), the claims table, the verifier
+        # node, the verdicts for the trajectory lines (None: none), the message when nothing came back
+        "answer": ("compose", "decompose"), "table": "table", "verify": "verify", "verdicts": None,
+        "none": "no questions were produced; see steps/decompose.out",
+    },
+}

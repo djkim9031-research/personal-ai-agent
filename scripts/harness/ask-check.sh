@@ -2,10 +2,11 @@
 # Runs ask.py against the stand-in model server on a scratch project, so the graph, the parsing and
 # the reports can be checked without the GPU: narrow mode with four lanes and with one, broad mode,
 # broad mode with --no-skills, a resumed narrow run, /custom-graph through the window's command and
-# stopped from the window, the probe, and the repo-facts effort variant. Then checks the recorded
-# requests and the run folders: concurrency, resume, the effort field in every request, no permission
-# that asks for a headless agent, the verifier never sees a skill, batching, the trajectory lines, the
-# graph tool offered only to its agent and given the question as typed. Usage: ask-check.sh [OUT]
+# stopped from the window, a private flow through a private command, the probe, and the repo-facts
+# effort variant. Then checks the recorded requests and the run folders: concurrency, resume, the
+# effort field in every request, no permission that asks for a headless agent, the verifier never
+# sees a skill, batching and hop rows, the trajectory lines, the live state in graph.json, the graph
+# tool offered only to its agent and given the question as typed. Usage: ask-check.sh [OUT]
 set -eu
 here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 repo=$(cd "$here/../.." && pwd)
@@ -65,12 +66,18 @@ seed="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 mkdir -p "$cg/home/config/opencode/tools" "$cg/home/data" "$cg/home/cache" "$cg/home/state"
 cp -R "$seed/node_modules" "$seed/package.json" "$seed/package-lock.json" "$cg/home/config/opencode/"
 ln -s "$repo/config/opencode/tools/custom_graph.ts" "$cg/home/config/opencode/tools/custom_graph.ts"
+# A private flow and the command that runs it, as README Part 2 describes them.
+mkdir -p "$cg/flows" "$cg/home/config/opencode/commands"
+cp "$repo/config/flows/facts.py.example" "$cg/flows/facts.py"
+printf -- '---\ndescription: answer with the facts graph\nagent: graph\n---\n%s\n<mode>facts</mode>\n<question>\n$ARGUMENTS\n</question>\n' \
+    "Answer the question between the markers with the custom_graph tool, then reply with its output exactly as returned." \
+    > "$cg/home/config/opencode/commands/facts-graph.md"
 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import graph; graph.settings(sys.argv[2], sys.argv[3])' \
     "$here" "$cg/opencode.json" http://127.0.0.1:8096
 window() {
     exec env -C "$out/project" XDG_CONFIG_HOME="$cg/home/config" XDG_DATA_HOME="$cg/home/data" \
         XDG_CACHE_HOME="$cg/home/cache" XDG_STATE_HOME="$cg/home/state" OPENCODE_CONFIG="$cg/opencode.json" \
-        AGENT_NO_NOTES=1 AGENT_ASK_DIR="$cg/ask" AGENT_ASK_SCOPE=check "$here/opencode.sh" "$@"
+        AGENT_NO_NOTES=1 AGENT_ASK_DIR="$cg/ask" AGENT_ASK_SCOPE=check AGENT_FLOWS_DIR="$cg/flows" "$here/opencode.sh" "$@"
 }
 # Passed word by word: opencode run quotes an argument that holds a space, the window does not.
 cq='How does the "cli" count `unique` words, $(touch PWNED) and $1?'
@@ -107,6 +114,9 @@ for i in $(seq 1 20); do
 done
 kill $server
 wait $server 2>/dev/null || true
+echo; echo "== a private flow through a private command"
+(window run --dir "$out/project" --title facts-graph --format json --command facts-graph What does this project do?) \
+    < /dev/null > "$cg/facts-run.jsonl"
 echo; echo "== probe"
 python3 "$here/probe.py" --selftest
 python3 "$here/probe.py" --questions "$here/repo-facts.example.json" --out "$out/probe" --samples 2 --lanes 2 \
@@ -288,9 +298,9 @@ def offered(r):
     return [t.get("function", {}).get("name") for t in r["body"].get("tools") or []]
 wreqs = lines(f"{out}/window-requests.jsonl")
 graph_reqs = [r for r in wreqs if "custom_graph" in offered(r)]
-check(len(graph_reqs) == 3 and all(offered(r) == ["custom_graph"] for r in graph_reqs),
-      f"{len(graph_reqs)} requests offered the graph tool, expected 3, each with no other tool")
-check(sum(r["matched"] == "tool result" for r in wreqs) == 1, "the graph agent did not reply once after the tool")
+check(len(graph_reqs) == 5 and all(offered(r) == ["custom_graph"] for r in graph_reqs),
+      f"{len(graph_reqs)} requests offered the graph tool, expected 5, each with no other tool")
+check(sum(r["matched"] == "tool result" for r in wreqs) == 2, "the graph agent did not reply once after each tool run")
 runs = {load(p)["question"]: os.path.dirname(p) for p in glob.glob(f"{cg}/ask/*/graph.json")}
 run = runs.get(cq)
 check(run is not None, f"no run of the question as typed; runs of {sorted(runs)}")
@@ -311,6 +321,33 @@ if run:
     head = open(f"{run}/progress.log").readline()
     check(head.startswith(f"custom graph from the window: scope check (the project's scope: {own})"),
           f"progress.log starts {head!r}")
+    sid = next((e["sessionID"] for e in events if e.get("sessionID")), "")
+    check(bool(sid) and os.path.realpath(f"{cg}/ask/sessions/{sid}") == os.path.realpath(run),
+          "the window session is not linked to its run folder")
+# the private flow through its command: the flow named in the command's text, its steps in graph.json
+fevents = [json.loads(l) for l in open(f"{cg}/facts-run.jsonl") if l.startswith("{")]
+fsid = next((e["sessionID"] for e in fevents if e.get("sessionID")), "")
+fdir = os.path.realpath(f"{cg}/ask/sessions/{fsid}") if fsid else ""
+fg = load(f"{fdir}/graph.json") if fdir and os.path.isfile(f"{fdir}/graph.json") else {}
+check(fg.get("flow") == "facts" and fg.get("state") == "done", f"the facts command ran flow {fg.get('flow')!r}, state {fg.get('state')!r}")
+check([st["id"] for st in fg.get("stages", [])] == ["decompose", "split", "q", "pairs", "batches", "verify", "verdicts", "facts",
+                                                    "table", "compose"], "the facts run's stages")
+check(sum(v["node"] == "q" for v in fg.get("nodes", {}).values()) == 5, "the facts run did not answer 5 fact questions")
+# live state in graph.json: the planned steps, a start per run, the end state; hop rows folded per claim
+gn = load(f"{out}/narrow-serial/graph.json")
+check([st["id"] for st in gn.get("stages", [])] == ["decompose", "split", "q", "m", "pairs", "batches", "verify", "verdicts",
+                                                    "facts", "table", "compose"], "graph.json does not list the narrow steps")
+check(gn.get("state") == "done" and gn.get("started") and gn.get("ended"), f"graph.json state {gn.get('state')!r}")
+check(all(v.get("start") for v in gn["nodes"].values() if v["kind"] == "model")
+      and not any(v["status"] in ("waiting", "running") for v in gn["nodes"].values()), "graph.json runs without a start or unfinished")
+check(load(f"{out}/stopped/graph.json").get("state") == "stopped", "the stopped runner's graph.json is not marked stopped")
+check(v2.get("7", {}).get("correction", "").startswith("hop 2 is partly") and v2.get("6", {}).get("verdict") == "correct",
+      f"hop rows were not folded into their claims: {v2}")
+sys.path.insert(0, os.path.join(repo, "scripts/harness"))
+import ask_flows
+check("do not use" in ask_flows.fact_lines({"pairs": [{"n": 1, "question": "q", "answer": "a"}],
+                                            "verdicts": {"1": {"verdict": "not parsed"}}}),
+      "compose would use an answer without a verdict")
 stopped = open(f"{cg}/stopped-run.txt").read().strip()
 check(bool(stopped) and stopped != run and os.path.isfile(f"{stopped}/progress.log"), "the stopped run did not start")
 check(not open(f"{cg}/stop-left.txt").read().strip(), "a stopped /custom-graph left ask.py or opencode runs behind")
@@ -326,6 +363,7 @@ print("\n".join(bad) if bad else
       f"lane; resume reran 1 run; efforts in every body; no ask for a headless agent; {checker} checker requests without a "
       f"skill; 2 verify batches merged; {len(traj)} trajectory lines; probe 4 declined and 4 wrong-confident; "
       f"a stopped runner left no run behind; /custom-graph: the tool offered to its agent alone, the question as "
-      f"typed, the reply the tool's output, stopped from the window with nothing left running")
+      f"typed, the reply the tool's output, stopped from the window with nothing left running; a private flow through "
+      f"a private command; live state in graph.json; hop rows folded per claim")
 sys.exit(1 if bad else 0)
 PY

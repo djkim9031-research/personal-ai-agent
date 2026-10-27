@@ -1,0 +1,3 @@
+{
+  "plugin": ["./tui/graph-view.tsx"]
+}

@@ -6,7 +6,14 @@ message when there is no answer. Every node runs at thinking effort xhigh: the a
 time; --effort overrides per run. The self flow is the model-driven graph: the
 window's /ask steps followed by the model in one session, then checked by the same claims and verify nodes. The checker's batches hold about BATCH units,
 a fact being one unit and a hop chain as many units as its hops, so a batch of chains stays under the cap.
+Private flows: every *.py file in ~/agent-data/flows (AGENT_FLOWS_DIR replaces the folder, for checks)
+may define FLOWS of its own from the pieces below; they never enter the repository
+(template: config/flows/facts.py.example). A name taken here is refused.
 """
+import glob
+import importlib.util
+import os
+
 from graph import FACTS, NUMBERED
 
 BATCH = 6  # units per verifier run: a fact is one, a hop chain as many as its hops
@@ -118,6 +125,8 @@ def fact_lines(c):
             line += f" Correction: {corr}" if corr else " No correction given; do not use this answer."
         elif v == "unverifiable":
             line += " Use only as inferred."
+        elif v != "correct":
+            line += " Not checked: do not use this answer."
         out.append(line)
     return "\n".join(out)
 
@@ -226,3 +235,18 @@ FLOWS = {
     "edit": {"nodes": [], "answer": (), "table": None, "verify": None, "verdicts": None,
              "none": "the edit flow is designed, not built: preflight, plan, gate, edit, gate, build, test, fix, verify, gate, shutdown, report"},
 }
+
+
+def load_private(folder=None):
+    folder = folder or os.environ.get("AGENT_FLOWS_DIR") or os.path.expanduser("~/agent-data/flows")
+    for path in sorted(glob.glob(os.path.join(folder, "*.py"))):
+        spec = importlib.util.spec_from_file_location("flows_" + os.path.basename(path)[:-3], path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        for name, flow in getattr(mod, "FLOWS", {}).items():
+            if name in FLOWS:
+                raise SystemExit(f"{path}: the flow name {name!r} is taken")
+            FLOWS[name] = flow
+
+
+load_private()
