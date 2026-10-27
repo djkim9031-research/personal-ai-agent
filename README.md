@@ -84,6 +84,32 @@ What the launcher sets for every session: the model is the local server only; sh
 
 It splits the question into small ones, answers each in a fresh session, has a separate checker confirm or refute every answer against the files, and writes the report under `~/agent-data/ask/`. Modes, options, the checks and the measurements are described in `docs/coding-harness.md`.
 
+### Notes and nightly review for opencode
+
+opencode keeps notes per project, like the email assistant keeps notes about you. Install once, after Part 1:
+
+    sudo scripts/opencode-memory/enable-notes.sh
+
+From then on every opencode session reads two short files:
+
+- **The project's notes**, `~/agent-data/opencode/notes/<work|personal>/<project>.md`, at most 3,000 characters. Worktrees of one repository share one file. The scope comes from `~/agent-data/hermes/scope.json` (Part 4); a project in neither list is work.
+- **Your profile** from the email assistant (`USER.md`), when Part 4's memory is set up. opencode only reads it.
+
+| In the opencode window | What happens |
+|---|---|
+| `/remember the build only works with --config=noremote` | The agent writes it as one sentence and asks to run `agent-notes add "…"`. Nothing is saved until you answer yes. |
+| `Run the test that failed last time` | The agent searches this project's earlier sessions with `agent-notes recall "…"`. |
+
+| In a terminal | What it does |
+|---|---|
+| `agent-notes show` | This project's notes. |
+| `agent-notes review` | The nightly review's proposals for this project, one at a time: `a` accept, `r` reject, `s` skip. Add `--all-projects` for every project. |
+| `agent-notes replace "OLD" "NEW"`, `agent-notes remove "OLD"`, `agent-notes undo` | Correct the notes yourself. Every change is a git commit in the notes folder. |
+
+**Nightly review.** At 03:30, and each time the model server starts, the local model reads each project's sessions since the last review. It proposes at most 6 note changes per project, each quoting your words or a command result from those sessions; a proposal whose quote is not found there is dropped. When opencode starts in a project with proposals waiting, it prints `agent-notes: N note proposals wait for this project`. The first review reads all your earlier sessions; `enable-notes.sh` starts it when the model server is already up, otherwise it runs at the next start. Then `agent-notes review --all-projects`.
+
+Work notes stay in `notes/work/` and are never backed up; personal notes are backed up (Part 4). `ask.py` and the other measurement scripts run without notes, so their results stay comparable.
+
 ## Part 3: the email assistant (Hermes and Gmail)
 
 You email the agent's own Gmail address from your personal address. Hermes Agent reads that mailbox every 15 seconds while the model server runs, answers with the local model, and replies in the same thread. It runs as its own user, `hermes`, which cannot read your files. The commands the model runs go into a Docker container with no network. A firewall rule lets the `hermes` user connect only to the model server, the local name resolver and the two mail ports (993 and 465), plus the local fetch service once web search is installed. Mail from any other address, or mail that Gmail did not verify as coming from your address, is ignored.
@@ -215,7 +241,7 @@ For example, ask `What is the latest release of restic? Give the page you read.`
 
 2. `sudo scripts/backup/setup-backup.sh`
 
-Every night at 04:00, restic stores an encrypted copy of the agent's notes and settings and of your personal conversations in `/var/backups/agent-restic`. It leaves out work conversations, secrets, and any text file matching the list. Every Sunday old copies are thinned and part of the data is read back.
+Every night at 04:00, restic stores an encrypted copy of the agent's notes and settings, of your personal conversations and of opencode's personal project notes in `/var/backups/agent-restic`. It leaves out work conversations, secrets, and any text file matching the list. Every Sunday old copies are thinned and part of the data is read back.
 
 The copies are encrypted with a password that the script created in `/root/.config/agent-backup/restic-password`. Keep a copy of it somewhere else, because without it the backups cannot be read:
 
@@ -232,6 +258,7 @@ The copies are encrypted with a password that the script created in `/root/.conf
 | Free the GPU | `sudo systemctl stop agent-vllm`; Agent offline follows. |
 | 02:30, 02:45 | Notes committed, conversations exported and filed. Runs with or without the model server. |
 | 03:00 | Nightly review, only while the model server runs; otherwise once at the next start. |
+| 03:30 | The coding agent's nightly review, same rule: only with the model server, otherwise at its next start. |
 | 04:00, Sunday 05:00 | Backup; weekly backup check. Runs with or without the model server. |
 | Any time | `sudo scripts/review/phase1-check.sh 7` prints the evidence for the last 7 days: services, firewall refusals, email round trips, backups, and the repository audit. |
 
@@ -241,6 +268,7 @@ The copies are encrypted with a password that the script created in `/root/.conf
 
 - `config/vllm/`, `scripts/serve/`: the model server's pinned settings, package list, start script, and the install, check and ask scripts.
 - `config/opencode/`, `scripts/harness/`, `skills/`: the coding harness: pinned release, settings, working rules and prompts; install and start scripts; the step-by-step question runner and its tests; skill templates.
+- `scripts/opencode-memory/`, `skills/recall/`: the coding agent's notes, their search over past sessions, and its nightly review.
 - `config/hermes/`, `config/nftables/`, `scripts/shell/`: the email assistant: pins, settings, the mail settings template, the firewall rules, and the install, start and check scripts.
 - `config/agent-memory/`, `scripts/agent-memory/`: note templates, the nightly memory jobs, the note editor and the check.
 - `config/hermes/skills/nightly-review/`, `scripts/dream/`: the nightly review.

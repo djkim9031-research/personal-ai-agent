@@ -33,6 +33,14 @@ Day 2:
 9. `(cd / && sudo -u hermes test -x "$HOME/agent-data" && echo open || echo closed)`. Expect `closed`.
 10. `systemctl show agent-memory-nightly.service agent-trajectories.service -p PrivateNetwork`. Expect `PrivateNetwork=yes` twice.
 
+## Increment 8b: notes for the coding agent
+
+1. `sudo scripts/opencode-memory/enable-notes.sh`, then `sudo scripts/backup/setup-backup.sh` again (it installs the backup job that now includes the personal notes).
+2. In a project, start `opencode` and type `/remember <a fact about the project>`. Expect a request to run `agent-notes add "…"`; answer yes. `agent-notes show` in that folder lists it.
+3. Start a new session and ask about that fact without naming the notes. Expect the answer to use it.
+4. The first review starts by itself (at step 1 if the model server is up, otherwise at its next start). `journalctl -u agent-opencode-dream.service -n 5 --no-pager -o cat` shows it. Expect `nightly review: N sessions, M proposals waiting`. Then `agent-notes review --all-projects`: every proposal quotes your words or a command result from your sessions.
+5. Ask `What did we decide about <a topic of an earlier session>?` Expect the agent to run `agent-notes recall` and name the session it found.
+
 ## Increment 9: nightly review
 
 1. `(cd / && sudo -u hermes env HOME=/home/hermes HERMES_HOME=/home/hermes/.hermes /home/hermes/.local/bin/hermes cron list)`. Expect `nightly-review`, schedule `0 3 * * *`, delivery `email`.
