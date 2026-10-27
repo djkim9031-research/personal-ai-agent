@@ -72,12 +72,12 @@ It downloads the pinned release, checks its hash, links `~/.local/bin/opencode`,
 - Type a request in the window, for example `Find where the settings file is read and list the functions it passes through.`
 - The **plan** agent only reads; the **build** agent may edit files and run commands. The Tab key switches between them. Reading or editing a file outside the project folder asks for your permission first.
 - `/verify` checks the factual claims of the last answer against the files. `/ask your question` answers in steps: narrow questions, one helper session each, every answer checked.
-- `/custom-graph your question` runs the question through the step-by-step runner below (`ask.py`, not the model following steps by itself as in `/ask`) and shows its checked answer, the claims table and the report path in the window. It takes 6 to 30 minutes; follow it with `tail -f ~/agent-data/ask/latest/progress.log`; Esc twice stops it. The runner sees only the question and the files, not the conversation, so write the question so it stands on its own. Your next message goes to the plan or build agent as usual and can ask about the answer.
+- `/custom-graph your question` runs the question through the step-by-step runner below (`ask.py`, not the model following steps by itself as in `/ask`) and shows its checked answer, the claims table and the report path in the window. It takes 6 to 30 minutes; "what does this repo do?" on this repository took 20. While it runs, the right-hand sidebar shows each step with its state (✓ done, ● running, ○ waiting, ✗ failed). The sidebar opens by itself when the terminal is wider than 120 columns; otherwise press ctrl+x, then b. `tail -f ~/agent-data/ask/latest/progress.log` shows the same in a terminal, and Esc twice stops the run. The runner sees only the question and the files, not the conversation, so write the question so it stands on its own. Your next message goes to the plan or build agent as usual and can ask about the answer.
 - For one task without the window: `opencode run "your request"`.
 
 What the launcher sets for every session: the model is the local server only; sharing and the update check are off; web fetch and web search are denied; skills of other tools in your home folder are ignored; every session reads the working rules in `config/opencode/AGENTS.md` (numbers only from commands, sources named, guesses marked as guesses).
 
-**Skills.** opencode reads skills from `~/agent-data/work/skills/`. `skills/repo-facts/` is a template for a fact sheet about one codebase: copy the folder there and fill it in, and the model reads it instead of guessing.
+**Your own graphs, skills, tools and commands:** see [below](#your-own-graphs-skills-tools-and-commands), with where each one goes for all projects or for one.
 
 **Checked answers to questions about a codebase**, without the window:
 
@@ -110,6 +110,71 @@ From then on every opencode session reads two short files:
 **Nightly review.** At 03:30, and each time the model server starts, the local model reads each project's sessions since the last review. It proposes at most 6 note changes per project, each quoting your words or a command result from those sessions; a proposal whose quote is not found there is dropped. When opencode starts in a project with proposals waiting, it prints `agent-notes: N note proposals wait for this project`. The first review reads all your earlier sessions; `enable-notes.sh` starts it when the model server is already up, otherwise it runs at the next start. Then `agent-notes review --all-projects`.
 
 Work notes stay in `notes/work/` and are never backed up; personal notes are backed up (Part 4). `ask.py` and the other measurement scripts run without notes, so their results stay comparable.
+
+### Your own graphs, skills, tools and commands
+
+The launcher gives every project you open the settings of this repository: the commands above, the agents, the working rules, the graph panel. You copy nothing into a project for those. Your own additions go in the places below. opencode reads them when it starts, so close and reopen the window after a change.
+
+| What | For every project | For one project | Template |
+|---|---|---|---|
+| A graph: the steps of a checked answer, for `ask.py` and the window | `~/agent-data/flows/<name>.py` | none: a graph is Python code, so it runs only from your own folder | `config/flows/facts.py.example` |
+| A command, `/name` in the window | `~/.config/opencode/commands/<name>.md` | `<project>/.opencode/commands/<name>.md` | the `command` entries of `config/opencode/opencode.json` |
+| A skill: instructions the model reads when a task matches its description | `~/agent-data/work/skills/<name>/SKILL.md` | `<project>/.opencode/skills/<name>/SKILL.md` | `skills/repo-facts/`, a fact sheet about one codebase |
+| A tool: a function the model can call | `~/.config/opencode/tools/<name>.ts` | `<project>/.opencode/tools/<name>.ts` | `config/opencode/tools/custom_graph.ts` |
+| An agent | `~/.config/opencode/agents/<name>.md` | `<project>/.opencode/agents/<name>.md` | the `agent` entries of `config/opencode/opencode.json` |
+| Other settings | `config/opencode/opencode.json` in this repository | `<project>/opencode.json` or `<project>/.opencode/opencode.json` | |
+
+- **Before the first file for one project**, run `scripts/harness/setup-project.sh ~/code/my-project` once. It makes the four `.opencode/` folders. It links opencode's plugin package into `.opencode/`: without it, every start in that project, and every step of a graph run there, waits about 70 seconds for a package install that cannot reach the network. And it adds `.opencode/` to the project's local ignore list (`.git/info/exclude`, never committed, shared by the project's worktrees), so none of it lands in that project's git.
+- **Who sees what.** Files for one project are used by the window in that project and by the graph's runs there. Files in `~/.config/opencode/` are used by the window in every project, not by the graph's runs, which use private opencode homes. Skills in `~/agent-data/work/skills/` are used by both, except by the checker.
+- **Which wins.** A project's own settings are read after this repository's and win where they differ.
+- **Private stays private.** This repository is public: names, prompts or paths of a private codebase go only into the home-folder places above.
+
+**A graph of your own**, from the template:
+
+    mkdir -p ~/agent-data/flows
+    cp config/flows/facts.py.example ~/agent-data/flows/facts.py
+    scripts/harness/ask.py --project ~/code/my-project --mode facts --dry-run "What does this project do?"
+    scripts/harness/ask.py --project ~/code/my-project --scope personal --mode facts "What does this project do?"
+
+The template asks only fact questions, so it is faster than the default graph. Its comments explain each field of a step, so you can change the prompts and add or remove steps. Each entry of `FLOWS` in the file is one graph; its name becomes a `--mode` and must not be a built-in one (narrow, broad, self, verifyset, edit). `--dry-run` prints the steps without running anything. To run it from the window, create `~/.config/opencode/commands/facts-graph.md` with these lines:
+
+    ---
+    description: answer with my facts graph
+    agent: graph
+    ---
+    Answer the question between the markers with the custom_graph tool, then reply with its output exactly as returned.
+    <mode>facts</mode>
+    <question>
+    $ARGUMENTS
+    </question>
+
+Reopen the window and type `/facts-graph What does this project do?`. The `<mode>` line names the graph; the rest of the file is the same for every graph; the sidebar shows your graph's steps.
+
+**A skill** is a folder with a `SKILL.md`. Every session lists each skill's `name` and `description`, and the model reads the whole file when a task matches the description:
+
+    ---
+    name: build-commands
+    description: How to build and test this project. Read it before running a build or a test.
+    ---
+    Run the tests with: python3 -m pytest tests
+
+**A tool** is a TypeScript file whose default export has a `description`, its arguments (each one a JSON Schema) and an `execute` function; the file name is the tool's name. For example, `~/.config/opencode/tools/line_count.ts`:
+
+    import { readFileSync } from "node:fs"
+    import path from "node:path"
+
+    export default {
+      description: "Counts the lines of one file of the project, as wc -l does.",
+      args: { file: { type: "string", description: "the file's path relative to the project folder" } },
+      async execute(args: { file: string }, ctx: any) {
+        const text = readFileSync(path.join(ctx.directory, args.file), "utf8")
+        return String((text.match(/\n/g) ?? []).length)
+      },
+    }
+
+Every agent is offered a new tool unless its settings deny it. To give a tool to one agent only, deny it under `permission` and allow it in that agent's own `permission`, as `config/opencode/opencode.json` does for `custom_graph`.
+
+**A command** is a Markdown file: `description` and, if you want, `agent` at the top, and below them the text sent to the model, where `$ARGUMENTS` becomes what you type after the command. Anything written as `` !`command` `` in that text, including what you type after the command, runs in the shell before the model sees it, so never type one into a question.
 
 ## Part 3: the email assistant (Hermes and Gmail)
 
@@ -268,7 +333,7 @@ The copies are encrypted with a password that the script created in `/root/.conf
 ## What is in this repository
 
 - `config/vllm/`, `scripts/serve/`: the model server's pinned settings, package list, start script, and the install, check and ask scripts.
-- `config/opencode/`, `scripts/harness/`, `skills/`: the coding harness: pinned release, settings, working rules and prompts; install and start scripts; the step-by-step question runner and its tests; skill templates.
+- `config/opencode/`, `config/flows/`, `scripts/harness/`, `skills/`: the coding harness: pinned release, settings, working rules and prompts, the tool of `/custom-graph` and the window's graph panel; the template for a graph of your own; the install, start and project-setup scripts; the step-by-step question runner and its tests; skill templates.
 - `scripts/opencode-memory/`, `skills/recall/`: the coding agent's notes, their search over past sessions, and its nightly review.
 - `config/hermes/`, `config/nftables/`, `scripts/shell/`: the email assistant: pins, settings, the mail settings template, the firewall rules, and the install, start and check scripts.
 - `config/agent-memory/`, `scripts/agent-memory/`: note templates, the nightly memory jobs, the note editor and the check.
