@@ -3,8 +3,9 @@ fixed at most twice and reviewed. Nodes for graph.py, like the flows in ask_flow
 
 plan: the answering agent (read-only) lists the files to write, one build and one test command, the
 claims the finished change must meet, and the steps; spec checks and parses it. approve: the run stops
-there until the owner approves (ask.py --approve; from the window, /custom-graph-build go), then goes on
-in the same run folder with the plan reused. edit: the hidden editor agent, in a settings copy that lets
+there unless the owner approved the change beforehand (ask.py --approve; from the window, a /custom-graph
+request that starts with "let's build" or "let's edit"); a stopped plan goes on in the same run folder with
+ask.py --resume DIR --approve, the plan reused. edit: the hidden editor agent, in a settings copy that lets
 it write the planned files and nothing else, with no commands. After every editor run a gate compares
 the files with the snapshot taken just before it: only planned files may have changed, and at least one
 must have. Then the plan's build and test commands run in the project; a failure goes back to the
@@ -327,8 +328,8 @@ def outcome(c):
     halt, state = c.get("halt"), c.get("halt_state")
     if state == "planned":
         return "\n".join([f"Plan for: {c.get('question', '')}", "", c.get("plan_view") or "", "",
-                          "Nothing has been changed yet. To make this change, send: /custom-graph-build go",
-                          "To change the plan instead, send /custom-graph-build again with the request reworded."])
+                          "Nothing has been changed yet. To make this change, run the same ask.py command again "
+                          "with --resume <this run folder> --approve."])
     res, rows = c.get("result") or {}, c.get("review") or {}
     n_claims = len(((c.get("spec") or {}).get("claims")) or [])
     good = sum(1 for i in range(1, n_claims + 1) if (rows.get(str(i)) or {}).get("verdict") == "correct")
@@ -348,6 +349,8 @@ def outcome(c):
     if rounds_text(c):
         lines += ["", "Build and test:"] + rounds_text(c)
     lines += ["", "Nothing was committed: see the change with git status and git diff in the project."]
+    if c.get("plan_unseen") and c.get("plan_view"):  # approved before it was shown: show what was carried out
+        lines += ["", "The plan carried out (made from the earlier answer):", "", c["plan_view"]]
     return "\n".join(lines)
 
 

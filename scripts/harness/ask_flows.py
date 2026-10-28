@@ -35,7 +35,7 @@ Claims to check:
 
 Check every claim against the repository and return your report. Keep the claim numbers exactly as given."""
 
-COMPOSE = """Answer the question below from the verified facts listed under it and from nothing else. They were checked against the repository. After each statement, cite the facts it rests on by number in square brackets. Where the facts do not cover a part of the question, write "not checked" for that part instead of filling it in.
+COMPOSE = """Answer the question below from the verified facts listed under it and from nothing else. They were checked against the repository. After each statement, cite the facts it rests on by number in square brackets. Where the facts do not cover a part of the question, write "not checked" for that part instead of filling it in. Do not mention plan mode, and do not offer to make a change yourself: the owner asks for changes separately.
 
 Question: {question}
 

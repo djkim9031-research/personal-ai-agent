@@ -89,7 +89,8 @@ def main():
             ap.error("a question is required")
         q = a.question.strip()
         earlier = open(a.context).read().strip() if a.context else ""
-        ctx = {"question": q, "n": a.max_questions, "project": a.project, "approved": a.approve, "earlier": earlier,
+        ctx = {"question": q, "n": a.max_questions, "project": a.project, "approved": a.approve,
+               "plan_unseen": a.approve and not a.resume, "earlier": earlier,
                "earlier_block": "\n\nAn earlier answer from this conversation, which the request may call the plan:\n"
                                 + earlier if earlier else ""}
     if a.dry_run:

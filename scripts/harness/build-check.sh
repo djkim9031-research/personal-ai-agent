@@ -1,10 +1,12 @@
 #!/bin/sh
 # Runs the build flow of ask.py against the stand-in model server on a scratch git project, so the plan,
 # the owner's approval, the editor's file limits, the gates, the build and test commands, the fix round,
-# the review and /custom-graph-build ... go from the window can be checked without the GPU. Cases: a plan
-# then go; a failing test fixed in the editor's session; a write outside the plan; a test command that
-# cannot run; a plan that cannot be read; a stopped runner during a command; the window. Usage:
-# build-check.sh [OUT]
+# the review and /custom-graph let's build from the window can be checked without the GPU. Cases: a plan
+# then its approval; a failing test fixed in the editor's session; a write outside the plan; a test
+# command that cannot run; a plan that cannot be read; a stopped runner during a command; the window:
+# let's build with no answer, an answer (a private flow with no model step stands in for a /custom-graph
+# answer) then let's build, let's edit after it, a question that starts with let's, a change described in
+# full. Usage: build-check.sh [OUT]
 set -eu
 here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 repo=$(cd "$here/../.." && pwd)
@@ -30,7 +32,7 @@ done
 build() { python3 "$here/ask.py" --project "$out/project" --server http://127.0.0.1:8089 --scope check --mode build "$@"; }
 reset() { git -C "$out/$1" checkout -q -- . && git -C "$out/$1" clean -qfd; }
 build --dry-run "HAPPY-CASE write hello.txt" > "$out/dry-run.txt"
-echo "== the plan, then go"
+echo "== the plan, then its approval"
 build --out "$out/happy" "HAPPY-CASE write hello.txt" > "$out/happy-plan.txt"
 git -C "$out/project" status --porcelain > "$out/happy-plan-status.txt"
 build --resume "$out/happy" --approve "HAPPY-CASE write hello.txt" > "$out/happy-go.txt"
@@ -64,7 +66,8 @@ wait $runner || true
 sleep 1
 pgrep -fx "sleep 4242" > "$out/slow-left.txt" || true
 reset project
-echo; echo "== /custom-graph-build from the window, then go, go again, and a request that refers to the plan"
+echo; echo "== /custom-graph from the window: let's build with no answer, an answer then let's build, let's edit"
+echo "   after that, a question that starts with let's, and a change described in full"
 cg="$out/window"
 seed="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 mkdir -p "$cg/home/config/opencode/tools" "$cg/home/data" "$cg/home/cache" "$cg/home/state"
@@ -72,22 +75,43 @@ cp -R "$seed/node_modules" "$seed/package.json" "$seed/package-lock.json" "$cg/h
 ln -s "$repo/config/opencode/tools/custom_graph.ts" "$cg/home/config/opencode/tools/custom_graph.ts"
 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import graph; graph.settings(sys.argv[2], sys.argv[3])' \
     "$here" "$cg/opencode.json" http://127.0.0.1:8088
+# An answer without the model, standing in for a /custom-graph answer: a private flow whose one step returns
+# a fixed plan, and its command.
+mkdir -p "$cg/flows" "$cg/home/config/opencode/commands"
+cat > "$cg/flows/note.py" <<'FLOW'
+FLOWS = {"note": {"nodes": [dict(id="note", kind="code", fn=lambda c: "The plan: write hello.txt with the single line hello.")],
+                  "answer": ("note",), "table": None, "verify": None, "verdicts": None, "none": "no note"}}
+FLOW
+printf -- '---\ndescription: a fixed answer\nagent: graph\n---\n%s\n<mode>note</mode>\n<question>\n$ARGUMENTS\n</question>\n' \
+    "Answer the question between the markers with the custom_graph tool, then reply with its output exactly as returned." \
+    > "$cg/home/config/opencode/commands/note-graph.md"
 window() {
     (env -C "$out/wproject" XDG_CONFIG_HOME="$cg/home/config" XDG_DATA_HOME="$cg/home/data" \
         XDG_CACHE_HOME="$cg/home/cache" XDG_STATE_HOME="$cg/home/state" OPENCODE_CONFIG="$cg/opencode.json" \
-        AGENT_NO_NOTES=1 AGENT_ASK_DIR="$cg/ask" AGENT_ASK_SCOPE=check "$here/opencode.sh" run --dir "$out/wproject" \
+        AGENT_NO_NOTES=1 AGENT_ASK_DIR="$cg/ask" AGENT_ASK_SCOPE=check AGENT_FLOWS_DIR="$cg/flows" \
+        "$here/opencode.sh" run --dir "$out/wproject" \
         --format json "$@") < /dev/null
 }
-window --title build --command custom-graph-build HAPPY2-CASE write hello.txt > "$cg/run1.jsonl"
-sid=$(python3 -c 'import json, sys
+session_of() {
+    python3 -c 'import json, sys
 for l in open(sys.argv[1]):
     if l.startswith("{") and json.loads(l).get("sessionID"):
-        print(json.loads(l)["sessionID"]); break' "$cg/run1.jsonl")
-window --session "$sid" --command custom-graph-build go > "$cg/run2.jsonl"
-cp "$out/wproject/hello.txt" "$cg/hello.txt"
-window --session "$sid" --command custom-graph-build go > "$cg/run3.jsonl"
+        print(json.loads(l)["sessionID"]); break' "$1"
+}
+# Passed word by word: opencode run quotes an argument that holds a space, the window does not.
+window --title nothing --command custom-graph "let's" build > "$cg/run1.jsonl"
+window --title note --command note-graph what should we write > "$cg/run2.jsonl"
+sid=$(session_of "$cg/run2.jsonl")
+window --session "$sid" --command custom-graph "let's" build it > "$cg/run3.jsonl"
+cp "$out/wproject/hello.txt" "$cg/hello3.txt" 2>/dev/null || true
 reset wproject
-window --session "$sid" --command custom-graph-build EARLIER-CASE do it as planned > "$cg/run4.jsonl"
+window --session "$sid" --command custom-graph "let's" edit it again > "$cg/run4.jsonl"
+cp "$out/wproject/hello.txt" "$cg/hello4.txt" 2>/dev/null || true
+reset wproject
+window --title question --command custom-graph "let's" check what this project does > "$cg/run5.jsonl"
+window --title full --command custom-graph "let's" build a greeting: write hello.txt with the line hello > "$cg/run6.jsonl"
+cp "$out/wproject/hello.txt" "$cg/hello6.txt" 2>/dev/null || true
+reset wproject
 echo
 python3 - "$out" "$cg" "$here" <<'PY'
 import glob, json, os, sys
@@ -134,10 +158,10 @@ reqs = lines(f"{out}/requests.jsonl")
 dry = open(f"{out}/dry-run.txt").read()
 check(all(n in dry for n in ("preflight", "plan:", "approve", "edit:", "gate0", "build1", "test1", "fix1", "review", "outcome"))
       and "agent editor" in dry and "Request to plan: HAPPY-CASE" in dry, "the dry run does not describe the build flow")
-# the plan, then go
+# the plan, then its approval
 plan_out = open(f"{out}/happy-plan.txt").read()
-check("/custom-graph-build go" in plan_out and "- hello.txt" in plan_out and "TEST: grep -qx hello hello.txt" in plan_out,
-      "the plan reply does not show the plan and how to approve it")
+check("--resume <this run folder> --approve" in plan_out and "- hello.txt" in plan_out
+      and "TEST: grep -qx hello hello.txt" in plan_out, "the plan reply does not show the plan and how to approve it")
 check(not open(f"{out}/happy-plan-status.txt").read().strip(), "the project changed before the plan was approved")
 g = load(f"{out}/happy/graph.json")
 check(g["state"] == "done" and g.get("project") == f"{out}/project", f"happy run state {g['state']!r}")
@@ -145,10 +169,10 @@ check(status("happy", "plan") == "reused" and status("happy", "edit") == "done" 
       and status("happy", "build1") == "done" and status("happy", "test1") == "done" and status("happy", "review") == "done"
       and status("happy", "fix1") == "skipped", f"happy run steps {[(k, v['status']) for k, v in nodes('happy').items()]}")
 check(sum(r["matched"] == "Request to plan:" and "HAPPY-CASE" in last_user(r["body"]) for r in reqs) == 1,
-      "the plan was asked for again after go")
+      "the plan was asked for again after the approval")
 go = open(f"{out}/happy-go.txt").read()
 check(go.startswith("Done: the change is in place, the commands passed, and the checker confirmed all 2 claims.")
-      and "- hello.txt: new, 1 line\n" in go and "Nothing was committed" in go and "| 2 |" in go, f"the go reply: {go[:300]!r}")
+      and "- hello.txt: new, 1 line\n" in go and "Nothing was committed" in go and "| 2 |" in go, f"the reply after the approval: {go[:300]!r}")
 check(open(f"{out}/happy-hello.txt").read() == "hello\n", "hello.txt does not hold the line hello")
 conf = load(f"{out}/happy/opencode.edit.json")
 check(conf["permission"]["edit"] == {"*": "deny", "hello.txt": "allow"}, f"the editor's edit rule {conf['permission'].get('edit')}")
@@ -200,25 +224,46 @@ check({k: v["verdict"] for k, v in rows.items()} == {"1": "correct", "2": "partl
 # a stopped runner
 check(load(f"{out}/slow/graph.json")["state"] == "stopped", "the stopped build run is not marked stopped")
 check(not open(f"{out}/slow-left.txt").read().strip(), "a stopped runner left its test command running")
-# the window: the plan, go, go again, a request with the earlier answer
+# the window: let's build with no answer, an answer then let's build, let's edit, a let's question, a full request
 def tool_outputs(path):
     events = [json.loads(l) for l in open(path) if l.startswith("{")]
     return [e["part"]["state"].get("output") or "" for e in events
             if e.get("type") == "tool_use" and e["part"].get("tool") == "custom_graph"]
-o1, o2, o3 = (tool_outputs(f"{cg}/run{i}.jsonl") for i in (1, 2, 3))
-check(len(o1) == 1 and "/custom-graph-build go" in o1[0], f"window plan reply {o1}")
-check(len(o2) == 1 and o2[0].startswith("Done: the change is in place"), f"window go reply {[x[:200] for x in o2]}")
-check(open(f"{cg}/hello.txt").read() == "hello\n", "the window's go did not write hello.txt")
-check(len(o3) == 1 and o3[0].startswith("No plan is waiting"), f"window second go reply {o3}")
+
+
+def flow_of(path):
+    events = [json.loads(l) for l in open(path) if l.startswith("{")]
+    outs = [(e["part"]["state"].get("metadata") or {}).get("out") for e in events
+            if e.get("type") == "tool_use" and e["part"].get("tool") == "custom_graph"]
+    return load(f"{outs[0]}/graph.json").get("flow") if outs and outs[0] else None
+
+
+o = {i: tool_outputs(f"{cg}/run{i}.jsonl") for i in range(1, 7)}
+check(len(o[1]) == 1 and o[1][0].startswith("Nothing to build yet in this session"), f"let's build with no answer: {o[1]}")
+check(len(o[2]) == 1 and "write hello.txt with the single line hello" in o[2][0], f"the stand-in answer: {o[2]}")
+for i in (3, 4, 6):
+    check(len(o[i]) == 1 and o[i][0].startswith("Done: the change is in place") and "The plan carried out" in o[i][0]
+          and "- hello.txt" in o[i][0] and flow_of(f"{cg}/run{i}.jsonl") == "build", f"run {i} replied {[x[:300] for x in o[i]]}")
+    check(os.path.isfile(f"{cg}/hello{i}.txt") and open(f"{cg}/hello{i}.txt").read() == "hello\n", f"run {i} did not write hello.txt")
+check(flow_of(f"{cg}/run5.jsonl") == "narrow" and len(o[5]) == 1 and "Done:" not in o[5][0],
+      f"a question starting with let's ran {flow_of(f'{cg}/run5.jsonl')!r}")
 wreqs = lines(f"{out}/window-requests.jsonl")
 plans = [last_user(r["body"]) for r in wreqs if r["matched"] == "Request to plan:"]
-check(len(plans) == 2 and "An earlier answer from this conversation" not in plans[0]
-      and "An earlier answer from this conversation" in plans[1] and "Done: the change is in place" in plans[1],
-      "the request after go did not get the earlier answer")
+check(len(plans) == 3, f"{len(plans)} plan requests from the window, expected 3")
+if len(plans) == 3:
+    check("Request to plan: let's build it" in plans[0] and "write hello.txt with the single line hello" in plans[0],
+          "let's build did not plan from the answer before it")
+    check("Request to plan: let's edit it again" in plans[1] and "Done: the change is in place" in plans[1],
+          "let's edit did not get the build result before it as the earlier answer")
+    check("Request to plan: let's build a greeting" in plans[2] and "An earlier answer from this conversation" not in plans[2],
+          "a full request in a new session was given an earlier answer")
 print("\n".join(bad) if bad else
-      "checks passed: the plan shown and nothing changed before go; go reused the plan; the editor limited to the planned "
+      "checks passed: the plan shown and nothing changed before approval; the approval reused the plan; the editor "
+      "limited to the planned "
       "file and offered no shell; a failing test fixed in the editor's session; a write outside the plan refused and "
       "the run stopped; a command that cannot run reported, not fixed; an unreadable plan stopped; a stopped runner left "
-      "no command behind; the window: plan, go, no second go, the earlier answer passed on")
+      "no command behind; the window: let's build with no answer refused, an answer then let's build, let's edit "
+      "after it with the build result as the earlier answer, a question that starts with let's left a question, a "
+      "change described in full made without an earlier answer")
 sys.exit(1 if bad else 0)
 PY

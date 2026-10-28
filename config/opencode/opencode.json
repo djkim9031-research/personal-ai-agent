@@ -106,7 +106,7 @@
       }
     },
     "editor": {
-      "description": "Writes the planned change for /custom-graph-build in headless runs: only the planned files, no commands; hidden from the window.",
+      "description": "Writes the planned change for a /custom-graph build or edit request in headless runs: only the planned files, no commands; hidden from the window.",
       "mode": "primary",
       "hidden": true,
       "prompt": "{file:prompts/editor.md}",
@@ -140,14 +140,9 @@
       "template": "Answer the question at the end in four steps and show each step. 1. Write the narrow factual questions behind it, 3 to 12, each answerable by one command or one file. 2. For each question call the task tool with subagent_type \"explore\" and that question alone; keep its evidence table. 3. Call the task tool with subagent_type \"verify\" with the numbered question and answer pairs and the project directory; show its verdict table. 4. Write the answer from the verified pairs only, citing them by number; where the pairs do not cover a part of the question, write \"not checked\". Question: $ARGUMENTS"
     },
     "custom-graph": {
-      "description": "answer a question with the coded graph: narrow questions in fresh sessions, every answer checked, then composed (6 to 30 minutes)",
+      "description": "answer a question with the coded graph, every claim checked, read-only (5 to 30 minutes); after an answer, let's build or let's edit makes the change it describes: one editor, the project's build and test, at most 2 fix rounds, a checker (5 to 60 minutes)",
       "agent": "graph",
       "template": "Answer the question between the markers with the custom_graph tool, then reply with its output exactly as returned.\n<question>\n$ARGUMENTS\n</question>"
-    },
-    "custom-graph-build": {
-      "description": "plan a change with the coded graph and show the plan; /custom-graph-build go then makes it: one editor, the project's build and test, at most 2 fix rounds, a checker (10 to 60 minutes)",
-      "agent": "graph",
-      "template": "Run the request between the markers through the custom_graph tool, then reply with its output exactly as returned.\n<mode>build</mode>\n<question>\n$ARGUMENTS\n</question>"
     },
     "remember": {
       "description": "save one fact about this project to its notes (asks you before writing)",

@@ -1,5 +1,5 @@
 {
- "Run the request between the markers through the custom_graph tool": {
+ "Answer the question between the markers with the custom_graph tool": {
   "tool": "custom_graph",
   "arguments": {
    "question": "a shortened copy"

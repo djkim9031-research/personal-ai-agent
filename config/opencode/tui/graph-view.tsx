@@ -1,4 +1,4 @@
-// The window's view of a /custom-graph or /custom-graph-build run: the steps of its flow in the session's
+// The window's view of a /custom-graph run, a question or a change: the steps of its flow in the session's
 // sidebar (model runs and commands; skipped steps left out), each with its state, read every second from
 // the run folder that the tool links as <runs folder>/sessions/<session id> (graph.json from graph.py,
 // summary.json from ask.py).
@@ -123,7 +123,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
 
   const foot = createMemo(() => {
     const r = run()
-    if (r?.graph?.state === "planned") return "plan ready: send /custom-graph-build go to make the change"
+    if (r?.graph?.state === "planned") return "plan ready; nothing changed yet"
     if (r?.graph?.state === "halted") return `stopped: ${r.graph.reason ?? ""}`
     if (!r?.graph || r.graph.state !== "done") return ""
     const v = r.summary?.verdicts ?? {}
