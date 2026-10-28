@@ -1,0 +1,42 @@
+{
+ "Run the request between the markers through the custom_graph tool": {
+  "tool": "custom_graph",
+  "arguments": {
+   "question": "a shortened copy"
+  }
+ },
+ "Review the finished change": "| # | claim | verdict | evidence | correction |\n|---|---|---|---|---|\n| 1 | hello.txt holds the single line hello | correct | cat hello.txt prints hello | |\n| 2 | the test command exits with 0 | correct | grep -qx hello hello.txt exits 0 | |",
+ "failed after your change": {
+  "tool": "write",
+  "arguments": {
+   "filePath": "hello.txt",
+   "content": "hello\n"
+  }
+ },
+ "Request to plan: UNREADABLE-CASE": "I would write a greeting file and then test it.",
+ "Request to plan: BLOCKED-CASE": "FILES:\n- hello.txt: new, the single line hello\nBUILD: none\nTEST: no-such-command-here hello.txt\nCLAIMS:\n1. hello.txt holds the single line hello\nSTEPS:\n1. Write hello.txt with the single line hello.",
+ "Request to plan: SLOW-CASE": "FILES:\n- hello.txt: new, the single line hello\nBUILD: none\nTEST: sleep 4242\nCLAIMS:\n1. hello.txt holds the single line hello\nSTEPS:\n1. Write hello.txt with the single line hello.",
+ "Request to plan:": "FILES:\n- `hello.txt` (new): the single line hello\nBUILD: `test -f hello.txt`\nTEST: `grep -qx hello hello.txt`\nCLAIMS:\n1. hello.txt holds the single line hello\n2. the test command exits with 0\nSTEPS:\n1. Write hello.txt with the single line hello.",
+ "Request to carry out: BUGGY-CASE": {
+  "tool": "write",
+  "arguments": {
+   "filePath": "hello.txt",
+   "content": "helo\n"
+  }
+ },
+ "Request to carry out: ELSEWHERE-CASE": {
+  "tool": "write",
+  "arguments": {
+   "filePath": "other.txt",
+   "content": "x\n"
+  }
+ },
+ "Request to carry out:": {
+  "tool": "write",
+  "arguments": {
+   "filePath": "hello.txt",
+   "content": "hello\n"
+  }
+ },
+ "default": "ok"
+}

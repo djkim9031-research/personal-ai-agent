@@ -1,6 +1,8 @@
-// The tool behind /custom-graph: runs the owner's question through the coded graph
-// (scripts/harness/ask.py) on the session's project and returns the checked answer. A command may
-// name another flow with <mode>NAME</mode> before the question (README, "Your own graphs").
+// The tool behind /custom-graph and /custom-graph-build: runs the owner's request through the coded graph
+// (scripts/harness/ask.py) on the session's project and returns its output. A command may name another
+// flow with <mode>NAME</mode> before the question (README, "Your own graphs"). In build mode the run stops
+// after the plan; "go" continues the session's waiting plan in its run folder, with the plan reused. A new
+// build request gets the session's latest graph output as an earlier answer it may refer to.
 // install-opencode.sh links this file into the window's opencode config folder. The graph's own
 // headless runs use private opencode homes without it, so a node can never start another graph,
 // and the settings hide it from every agent except the hidden graph agent.
@@ -10,7 +12,7 @@
 // Esc stops the run.
 // AGENT_ASK_DIR and AGENT_ASK_SCOPE replace the runs folder and the scope, for checks.
 import { spawn, spawnSync } from "node:child_process"
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -18,6 +20,7 @@ import { fileURLToPath } from "node:url"
 const repo = path.resolve(path.dirname(realpathSync(fileURLToPath(import.meta.url))), "../../..")
 const OPEN = "<question>\n"
 const CLOSE = "\n</question>"
+const GO = /^go[.!]?$/i
 
 function messageText(ctx: any) {
   const users = (ctx.messages ?? []).filter((m: any) => m.info?.role === "user")
@@ -50,6 +53,28 @@ function scopeOf(dir: string) {
   return r.stdout?.trim() === "personal" ? "personal" : "work"
 }
 
+// The latest output of a finished graph run earlier in the session (one with a report, so not a message
+// such as "no plan is waiting"): what "the plan" in a build request most likely means.
+function earlierOutput(ctx: any) {
+  for (const m of [...(ctx.messages ?? [])].reverse()) {
+    for (const p of [...(m.parts ?? [])].reverse()) {
+      if (p.type === "tool" && p.tool === "custom_graph" && p.state?.status === "completed" && p.state?.metadata?.report
+          && p.state?.output) return p.state.output
+    }
+  }
+  return ""
+}
+
+// The session's last run when it is a build plan in this project waiting for go.
+function waitingPlan(root: string, session: string, dir: string) {
+  try {
+    const run = realpathSync(path.join(root, "sessions", session))
+    const g = JSON.parse(readFileSync(path.join(run, "graph.json"), "utf8"))
+    if (g.flow === "build" && g.state === "planned" && g.project === dir) return { run, question: g.question as string }
+  } catch {}
+  return undefined
+}
+
 function relink(link: string, target: string) {
   try {
     mkdirSync(path.dirname(link), { recursive: true })
@@ -74,26 +99,52 @@ function runFolder(root: string, session: string) {
 
 export default {
   description:
-    "Answers the owner's question with the coded question graph and returns the checked answer: the answer, " +
-    "its claims and verdicts, and the report path. Takes 6 to 30 minutes. Call it once per /custom-graph message.",
+    "Runs the owner's request through the coded graph and returns its output: for a question, the checked answer, " +
+    "its claims and verdicts, and the report path; for a change (build mode), the plan, or after go the change made " +
+    "and checked. Takes 5 to 60 minutes. Call it once per /custom-graph or /custom-graph-build message.",
   args: {
-    question: { type: "string", description: "the owner's question, as given" },
+    question: { type: "string", description: "the owner's request, as given" },
   },
   async execute(args: { question?: string }, ctx: any) {
     const text = messageText(ctx)
-    const q = questionOf(text, args.question ?? "")
-    if (!q) return { title: "custom graph", output: "No question given: type it after the command.", metadata: {} }
+    let q = questionOf(text, args.question ?? "")
+    const title = "custom graph"
+    if (!q) return { title, output: "No question given: type it after the command.", metadata: {} }
     const mode = modeOf(text)
     const dir = ctx.directory
     const own = scopeOf(dir)
     const scope = process.env.AGENT_ASK_SCOPE || own
-    const out = runFolder(process.env.AGENT_ASK_DIR || path.join(os.homedir(), "agent-data/ask"), ctx.sessionID)
+    const root = process.env.AGENT_ASK_DIR || path.join(os.homedir(), "agent-data/ask")
+    let out: string
+    const extra: string[] = []
+    if (mode === "build" && GO.test(q)) {
+      const w = waitingPlan(root, ctx.sessionID, dir)
+      if (!w) {
+        return { title, metadata: {},
+                 output: "No plan is waiting in this session. Start with: /custom-graph-build <what to build or change>" }
+      }
+      out = w.run
+      q = w.question
+      extra.push("--resume", out, "--approve")
+      if (existsSync(path.join(out, "earlier.md"))) extra.push("--context", path.join(out, "earlier.md"))
+      relink(path.join(root, "latest"), out)
+      appendFileSync(path.join(out, "progress.log"), `go from the window: the owner approved the plan; scope ${scope}\n`)
+    } else {
+      out = runFolder(root, ctx.sessionID)
+      extra.push("--out", out)
+      const earlier = mode === "build" ? earlierOutput(ctx) : ""
+      if (earlier) {
+        writeFileSync(path.join(out, "earlier.md"), earlier)
+        extra.push("--context", path.join(out, "earlier.md"))
+      }
+      writeFileSync(path.join(out, "progress.log"),
+                    `custom graph from the window: scope ${scope} (the project's scope: ${own}), project ${dir}\n`)
+    }
     const progress = path.join(out, "progress.log")
-    writeFileSync(progress, `custom graph from the window: scope ${scope} (the project's scope: ${own}), project ${dir}\n`)
     const log = openSync(progress, "a")
     const child = spawn(
       "python3",
-      ["-I", path.join(repo, "scripts/harness/ask.py"), "--project", dir, "--scope", scope, "--out", out,
+      ["-I", path.join(repo, "scripts/harness/ask.py"), "--project", dir, "--scope", scope, ...extra,
        ...(mode ? ["--mode", mode] : []), q],
       { cwd: dir, stdio: ["ignore", "pipe", log] },
     )
@@ -114,11 +165,11 @@ export default {
     })
     clearTimeout(force)
     ctx.abort.removeEventListener("abort", stop)
-    if (ctx.abort.aborted) return { title: "custom graph", output: `Stopped. Run folder: ${out}`, metadata: { out } }
-    if (code === 0) return { title: "custom graph", output: stdout.trim(), metadata: { out, report: path.join(out, "report.md") } }
+    if (ctx.abort.aborted) return { title, output: `Stopped. Run folder: ${out}`, metadata: { out } }
+    if (code === 0) return { title, output: stdout.trim(), metadata: { out, report: path.join(out, "report.md") } }
     const tail = readFileSync(progress, "utf8").trim().split("\n").slice(-15).join("\n")
     return {
-      title: "custom graph",
+      title,
       output: `The custom graph failed (exit ${code}). Last lines of ${progress}:\n${tail}`,
       metadata: { out },
     }

@@ -9,15 +9,17 @@ path:line hops); each is answered in a fresh session, several at a time in priva
 the hidden check agent verifies them in batches; the answer is composed from the verified pairs
 only. Broad mode: one session answers, lists its claims, the checker verifies them in batches, and
 the session rewrites the answer when a claim was partly or wrong. Verifyset mode checks a file of
-claims with known truth, to measure the checker itself. --no-skills leaves the skills out, so a fact
-sheet cannot stand in for the repository; the verifier agents never see the skills. --effort sets
-the thinking effort per node, --resume reruns only what changed, --dry-run prints the graph.
-Standard library only.
+claims with known truth, to measure the checker itself. Build mode makes a change: it plans and stops
+for the owner's approval, and goes on in the same run folder with --resume DIR --approve (build_flow.py).
+--context FILE gives the plan an earlier answer that the request may refer to. --no-skills leaves the
+skills out, so a fact sheet cannot stand in for the repository; the verifier agents never see the
+skills. --effort sets the thinking effort per node, --resume reruns only what changed, --dry-run prints
+the graph. Standard library only.
 
-Usage: ask.py --project DIR [--mode narrow|broad|verifyset] [--claims FILE] [--out DIR] [--resume DIR]
-              [--agent plan] [--checker check] [--max-questions 12] [--timeout 900] [--concurrency 4]
-              [--effort node=variant,...] [--scope work|personal|check] [--server URL] [--no-skills]
-              [--dry-run] "question"
+Usage: ask.py --project DIR [--mode narrow|broad|verifyset|build] [--claims FILE] [--out DIR] [--resume DIR]
+              [--approve] [--context FILE] [--agent plan] [--checker check] [--max-questions 12]
+              [--timeout 900] [--concurrency 4] [--effort node=variant,...] [--scope work|personal|check]
+              [--server URL] [--no-skills] [--dry-run] "question"
 """
 import argparse
 import datetime
@@ -68,6 +70,8 @@ def main():
     ap.add_argument("--isolate", action="store_true", help="kept for older command lines; every run uses private opencode homes")
     ap.add_argument("--no-skills", action="store_true",
                     help="leave the skills out of the settings copy, so the answer comes from the repository alone")
+    ap.add_argument("--approve", action="store_true", help="build mode: the owner approves the plan, so the change is made")
+    ap.add_argument("--context", help="a file with an earlier answer that the request may refer to (build mode)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     a.effort = dict(kv.split("=", 1) for kv in a.effort.split(",") if kv)
@@ -84,7 +88,10 @@ def main():
         if not a.question or not a.question.strip():
             ap.error("a question is required")
         q = a.question.strip()
-        ctx = {"question": q, "n": a.max_questions, "project": a.project}
+        earlier = open(a.context).read().strip() if a.context else ""
+        ctx = {"question": q, "n": a.max_questions, "project": a.project, "approved": a.approve, "earlier": earlier,
+               "earlier_block": "\n\nAn earlier answer from this conversation, which the request may call the plan:\n"
+                                + earlier if earlier else ""}
     if a.dry_run:
         print(graph.describe(a.mode, flow, ctx, a))
         return 0
@@ -99,7 +106,7 @@ def main():
     final = next((results[i]["text"] for i in flow["answer"] if results.get(i, {}).get("text")), "") or flow["none"]
     lines = (ctx.get(flow["table"]) or []) if flow["table"] else []
     verify_text = (ctx.get(flow["verify"] + "_text") or "") if flow["verify"] else ""
-    steps = [r for r in results.values() if r["kind"] == "model"]
+    steps = [r for r in results.values() if r["kind"] == "model" or (r["kind"] == "command" and r["status"] != "skipped")]
     seconds, tools = sum(s["seconds"] for s in steps), sum(s["tools"] for s in steps)
     verdicts = count_verdicts(lines)
     tokens = {k: sum(s["tokens"].get(k, 0) for s in steps) for k in graph.zero()}

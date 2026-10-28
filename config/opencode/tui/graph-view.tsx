@@ -1,6 +1,7 @@
-// The window's view of a /custom-graph run: the steps of its flow in the session's sidebar, each with
-// its state, read every second from the run folder that the tool links as
-// <runs folder>/sessions/<session id> (graph.json from graph.py, summary.json from ask.py).
+// The window's view of a /custom-graph or /custom-graph-build run: the steps of its flow in the session's
+// sidebar (model runs and commands; skipped steps left out), each with its state, read every second from
+// the run folder that the tool links as <runs folder>/sessions/<session id> (graph.json from graph.py,
+// summary.json from ask.py).
 // config/opencode/tui.json lists this file and the launcher passes that file to opencode; headless
 // runs never load it. A session without a run shows nothing.
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
@@ -10,7 +11,10 @@ import os from "node:os"
 import path from "node:path"
 
 const ROOT = process.env.AGENT_ASK_DIR || path.join(os.homedir(), "agent-data/ask")
-const LABEL: Record<string, string> = { q: "facts", m: "mechanisms" }
+const LABEL: Record<string, string> = {
+  q: "facts", m: "mechanisms", build1: "build", test1: "test", fix1: "fix 1", build2: "build 2", test2: "test 2",
+  fix2: "fix 2", build3: "build 3", test3: "test 3",
+}
 const MARK: Record<string, string> = {
   done: "✓",
   reused: "✓",
@@ -20,6 +24,7 @@ const MARK: Record<string, string> = {
   capped: "✗",
   timeout: "✗",
   failed: "✗",
+  blocked: "✗",
 }
 const OK = new Set(["done", "reused"])
 
@@ -84,7 +89,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     if (!g) return ""
     const start = Date.parse(g.started)
     const end = g.ended ? Date.parse(g.ended) : now()
-    return `${g.state === "running" ? "running" : g.state} ${clock(end - start)}`
+    return `${g.state} ${clock(end - start)}`
   })
 
   const stages = createMemo(() => {
@@ -92,7 +97,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     if (!g) return []
     const nodes = Object.entries(g.nodes ?? {}) as [string, any][]
     return (g.stages ?? [])
-      .filter((s: any) => s.kind === "model")
+      .filter((s: any) => s.kind === "model" || s.kind === "command")
       .map((s: any) => {
         const runs = nodes.filter(([, n]) => n.node === s.id).sort(([a], [b]) => a.localeCompare(b))
         const states = runs.map(([, n]) => n.status ?? "waiting")
@@ -105,18 +110,21 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
             : ""
           : single && OK.has(single.status)
             ? `${Math.round(single.seconds ?? 0)}s`
-            : state === "skipped"
-              ? "skipped"
+            : single && s.kind === "command" && single.exit != null && !["waiting", "running"].includes(single.status)
+              ? `exit ${single.exit}`
               : ""
         const live = runs
           .filter(([, n]) => n.status === "running")
           .map(([id, n]) => `${id} ${clock(now() - Date.parse(n.start))}, ${n.tools ?? 0} tool calls`)
-        return { label: LABEL[s.id] ?? s.id, state, right, cells: s.fanout ? runs : [], live }
+        return { label: LABEL[s.id] ?? s.id, state, right, cells: s.fanout ? runs : [], live, optional: s.optional }
       })
+      .filter((s: any) => s.state !== "skipped" && !(s.optional && s.state === "waiting"))
   })
 
   const foot = createMemo(() => {
     const r = run()
+    if (r?.graph?.state === "planned") return "plan ready: send /custom-graph-build go to make the change"
+    if (r?.graph?.state === "halted") return `stopped: ${r.graph.reason ?? ""}`
     if (!r?.graph || r.graph.state !== "done") return ""
     const v = r.summary?.verdicts ?? {}
     const counts = Object.entries(v).map(([k, n]) => `${n} ${k}`).join(", ")

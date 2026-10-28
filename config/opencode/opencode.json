@@ -105,6 +105,19 @@
         "todowrite": "deny"
       }
     },
+    "editor": {
+      "description": "Writes the planned change for /custom-graph-build in headless runs: only the planned files, no commands; hidden from the window.",
+      "mode": "primary",
+      "hidden": true,
+      "prompt": "{file:prompts/editor.md}",
+      "steps": 60,
+      "permission": {
+        "bash": "deny",
+        "task": "deny",
+        "todowrite": "deny",
+        "webfetch": "deny"
+      }
+    },
     "graph": {
       "description": "Runs a question through the coded graph for /custom-graph and shows the checked answer; hidden from the window.",
       "mode": "primary",
@@ -130,6 +143,11 @@
       "description": "answer a question with the coded graph: narrow questions in fresh sessions, every answer checked, then composed (6 to 30 minutes)",
       "agent": "graph",
       "template": "Answer the question between the markers with the custom_graph tool, then reply with its output exactly as returned.\n<question>\n$ARGUMENTS\n</question>"
+    },
+    "custom-graph-build": {
+      "description": "plan a change with the coded graph and show the plan; /custom-graph-build go then makes it: one editor, the project's build and test, at most 2 fix rounds, a checker (10 to 60 minutes)",
+      "agent": "graph",
+      "template": "Run the request between the markers through the custom_graph tool, then reply with its output exactly as returned.\n<mode>build</mode>\n<question>\n$ARGUMENTS\n</question>"
     },
     "remember": {
       "description": "save one fact about this project to its notes (asks you before writing)",

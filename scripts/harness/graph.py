@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Runs a flow: a list of nodes, each one opencode run, a Python step, or later a command.
+"""Runs a flow: a list of nodes, each one opencode run, a Python step, or a shell command.
 
 A model node names its agent, prompt, session, thinking effort, skills and budget; its prompt is
 filled from the outputs of earlier nodes, which is the edge between them. A fan-out node runs once
 per item of an earlier node's list, several at a time, each process in a private opencode home of
-its own. Every run leaves its events, tokens and status under steps/, graph.json holds the hashes
-that let --resume reuse what has not changed and the live state of every step (the window's graph
-panel reads it), and nodes.jsonl holds one line per run for later mining. Standard library only.
+its own. A command node runs one shell command in the project with a timeout. A Python step may
+raise Halt to end the flow early; the nodes after it are skipped except those marked always. Every
+run leaves its events, tokens and status under steps/, graph.json holds the hashes that let
+--resume reuse what has not changed and the live state of every step (the window's graph panel
+reads it), and nodes.jsonl holds one line per run for later mining. Standard library only.
 """
 import concurrent.futures
 import datetime
@@ -30,7 +32,9 @@ LAUNCHER = os.path.join(HERE, "opencode.sh")
 NUMBERED = re.compile(r"^\s*(?:[-*]\s+)?(\d+)[.)]\s*(.+?)\s*$")
 FIELD = re.compile(r"\{(\w+)\}")
 DEFAULTS = dict(kind="model", agent="answer", prompt="{item}", inputs=(), session="fresh", fanout=None, concurrency=4,
-                variant="xhigh", skills=True, timeout=None, max_tools=40, when=None, parse=None, fn=None)
+                variant="xhigh", skills=True, timeout=None, max_tools=40, when=None, parse=None, fn=None, cmd=None,
+                config=None, always=False, rerun=False)
+ERRORS = re.compile(r"error|fail|assert|exception|traceback|undefined|not found", re.I)
 OVERLAY = os.path.expanduser("~/agent-data/work/opencode-overlay.json")
 TRAJECTORIES = os.path.expanduser("~/agent-data/trajectories")
 
@@ -48,6 +52,14 @@ FACTS = shared()
 
 def say(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+class Halt(Exception):
+    """Raised by a code node to end the flow: the nodes after it are skipped except those marked always."""
+
+    def __init__(self, reason, state="halted"):
+        super().__init__(reason)
+        self.reason, self.state = reason, state
 
 
 BUDGETS = ("max_tools", "timeout")  # left out of a node's hash: a finished node is the same under a larger budget
@@ -101,18 +113,26 @@ def cells_of(line):
 
 
 HOP = re.compile(r"(\d+)\s*(?:\.\s*\(?|\()(\d+)\)?\.?$")  # 8.1, 8.1., 9(1), 9 (1), 9.(1)
+OUTSIDE = re.compile(r"^\s*(\d+)[.)]\s*(\|.*)$")  # 1. | claim | verdict | ...: the number before the row
 
 
 def table_rows(text):
-    """The verifier's table: claim number (as text) -> verdict, evidence, correction. A hop chain checked
+    """The verifier's table: claim number (as text) -> verdict, evidence, correction. A row may carry its
+    number before the table ("1. | claim | correct | ..."). A hop chain checked
     in rows 8.1, 8.2, ... (or 8(1), 8(2), ...) becomes one row by the rule of prompts/verify.md: correct only if every hop is,
     wrong (or unverifiable) only if every hop is, partly otherwise; the correction names the first hop
     that is not correct. A row for the whole claim wins over its hop rows."""
     rows, hops = {}, {}
     for line in text.splitlines():
-        if not line.strip().startswith("|"):
+        out = OUTSIDE.match(line)
+        if out:  # a row with its number written before it: kept only when a cell holds a verdict
+            cells = [out.group(1)] + cells_of(out.group(2))
+            if not any(verdict_of(c) for c in cells[1:]):
+                continue
+        elif line.strip().startswith("|"):
+            cells = cells_of(line)
+        else:
             continue
-        cells = cells_of(line)
         h = HOP.match(cells[0]) if cells else None
         if h and len(cells) >= 3:
             v = verdict_of(cells[2]) or next((verdict_of(c) for c in cells[1:] if verdict_of(c)), "unparsed")
@@ -345,6 +365,44 @@ def launch(iid, node, prompt, session, title, env, a, steps_dir, procs, on_tool=
     return r
 
 
+def tail(text, last=80, chars=8000):
+    """The lines that name an error, then the last lines, at most chars characters."""
+    rows = text.splitlines()
+    errs = [l for l in rows[:-last] if ERRORS.search(l)][:40]
+    return "\n".join(errs + (["..."] if errs else []) + rows[-last:])[-chars:]
+
+
+def command(iid, node, cmd, a, steps_dir, procs):
+    """One shell command in the project, its output in steps/<id>.log; stopped at the timeout. Exit 126
+    or 127 means the command itself could not run: blocked, which no change to the code can fix."""
+    log_path = os.path.join(steps_dir, f"{iid}.log")
+    r = {"id": iid, "node": node["id"], "kind": "command", "status": "done", "exit": None, "start": now(), "seconds": 0.0,
+         "tools": 0, "errors": 0, "rejected": 0, "session": None, "lane": None, "tokens": zero(), "cmd": cmd}
+    t0 = time.time()
+    with open(log_path, "w") as log:
+        p = subprocess.Popen(["bash", "-c", cmd], cwd=a.project, stdin=subprocess.DEVNULL, stdout=log,
+                             stderr=subprocess.STDOUT, env=dict(os.environ, TERM="dumb"), start_new_session=True)
+        procs.add(p)
+        try:
+            p.wait(timeout=node["timeout"])
+        except subprocess.TimeoutExpired:
+            r["status"] = "timeout"
+            kill(p, signal.SIGTERM)
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                kill(p, signal.SIGKILL)
+                p.wait()
+        procs.discard(p)
+    r["exit"], r["seconds"] = p.returncode, round(time.time() - t0, 1)
+    if r["status"] == "done" and r["exit"] != 0:
+        r["status"] = "blocked" if r["exit"] in (126, 127) else "failed"
+    r["text"] = tail(open(log_path, errors="replace").read())
+    r["value"] = {"cmd": cmd, "exit": r["exit"], "status": r["status"], "seconds": r["seconds"], "tail": r["text"]}
+    say(f"[{iid}] {r['status']}, {r['seconds']} s, exit {r['exit']}: {cmd}")
+    return r
+
+
 def run_flow(name, flow, ctx, a):
     """Runs the nodes in order; returns the records by instance id and the filled context."""
     out = a.out
@@ -352,9 +410,9 @@ def run_flow(name, flow, ctx, a):
     os.makedirs(steps_dir, exist_ok=True)
     gpath = os.path.join(out, "graph.json")
     old = (json.load(open(gpath)).get("nodes") or {}) if a.resume and os.path.isfile(gpath) else {}
-    graph = {"flow": name, "question": ctx.get("question"), "state": "running", "started": now(),
-             "stages": [{"id": s["id"], "kind": s.get("kind", "model"), "fanout": bool(s.get("fanout"))}
-                        for s in flow["nodes"]], "nodes": {}}
+    graph = {"flow": name, "question": ctx.get("question"), "project": a.project, "state": "running", "started": now(),
+             "stages": [{"id": s["id"], "kind": s.get("kind", "model"), "fanout": bool(s.get("fanout")),
+                         "optional": bool(s.get("when"))} for s in flow["nodes"]], "nodes": {}}
     cfg = {True: settings(os.path.join(out, "opencode.json"), a.server, ("skills",) if a.no_skills else ()),
            False: settings(os.path.join(out, "opencode.noskills.json"), a.server, ("skills",))}
     lanes = Lanes(os.path.join(out, "xdg"), a.concurrency)
@@ -382,14 +440,14 @@ def run_flow(name, flow, ctx, a):
         json.dump(rec, open(os.path.join(steps_dir, f"{r['id']}.json"), "w"), indent=1)
         with lock:
             graph["nodes"][r["id"]] = {k: r.get(k) for k in ("node", "kind", "status", "spec_hash", "inputs_hash", "lane",
-                                                            "session", "seconds", "start", "tools")}
+                                                            "session", "seconds", "start", "tools", "exit")}
             write()
 
-    def mark(iid, nid, **fields):
+    def mark(iid, nid, kind="model", **fields):
         """The live state of a run before it ends: waiting, then running with its tool calls, written at
         most once a second unless the status changes."""
         with lock:
-            rec = graph["nodes"].get(iid) or {"node": nid, "kind": "model"}
+            rec = graph["nodes"].get(iid) or {"node": nid, "kind": kind}
             if rec.get("status") not in (None, "waiting", "running"):
                 return
             graph["nodes"][iid] = {**rec, **fields}
@@ -426,7 +484,7 @@ def run_flow(name, flow, ctx, a):
             node = full(spec, a)
             nid = node["id"]
             spec_hash = sha({**{k: v for k, v in node.items() if k not in BUDGETS}, "project": a.project})
-            if node["when"] and not node["when"](ctx):
+            if (ctx.get("halt") and not node["always"]) or (node["when"] and not node["when"](ctx)):
                 r = {"id": nid, "node": nid, "kind": node["kind"], "status": "skipped", "exit": None, "seconds": 0.0,
                      "tools": 0, "errors": 0, "rejected": 0, "session": None, "lane": None, "tokens": zero(), "text": "",
                      "value": None, "spec_hash": spec_hash, "inputs_hash": ""}
@@ -437,11 +495,17 @@ def run_flow(name, flow, ctx, a):
                 continue
             if node["kind"] == "code":
                 inputs_hash = sha([ctx.get(k) for k in node["inputs"]])
-                if reusable(nid, spec_hash, inputs_hash):
+                if not node["rerun"] and reusable(nid, spec_hash, inputs_hash):
                     r = load(nid)
                 else:
-                    value = node["fn"](ctx)
-                    r = {"id": nid, "node": nid, "kind": "code", "status": "done", "exit": 0, "seconds": 0.0, "tools": 0,
+                    status = "done"
+                    try:
+                        value = node["fn"](ctx)
+                    except Halt as h:
+                        value, status = {"halt": h.reason}, "halted"
+                        ctx["halt"], ctx["halt_state"] = h.reason, h.state
+                        say(f"[{nid}] {h.reason}")
+                    r = {"id": nid, "node": nid, "kind": "code", "status": status, "exit": 0, "seconds": 0.0, "tools": 0,
                          "errors": 0, "rejected": 0, "session": None, "lane": None, "tokens": zero(),
                          "text": value if isinstance(value, str) else "", "value": value, "spec_hash": spec_hash,
                          "inputs_hash": inputs_hash}
@@ -449,8 +513,22 @@ def run_flow(name, flow, ctx, a):
                 save(r)
                 expose(node, [r])
                 continue
+            if node["kind"] == "command":  # never reused: a command acts on the project as it is now
+                cmd = node["cmd"](ctx)
+                mark(nid, nid, kind="command", status="running", start=now(), tools=0)
+                r = command(nid, node, cmd, a, steps_dir, procs)
+                r.update(spec_hash=spec_hash, inputs_hash=sha(cmd))
+                results[nid] = r
+                save(r)
+                expose(node, [r])
+                state["dirty"] = True
+                continue
             if node["kind"] != "model":
                 raise NotImplementedError(f"node kind {node['kind']!r} is not built")
+            conf = cfg[node["skills"]]
+            if node["config"]:  # settings of this node alone, merged over the run's copy
+                conf = os.path.join(out, f"opencode.{nid}.json")
+                json.dump(deep_merge(json.load(open(cfg[node["skills"]])), node["config"](ctx)), open(conf, "w"), indent=1)
             items = pick(ctx, node["fanout"]) if node["fanout"] else [None]
             jobs = []
             for i, item in enumerate(items, 1):
@@ -477,7 +555,7 @@ def run_flow(name, flow, ctx, a):
                 mark(job["iid"], nid, status="running", start=now(), tools=0)
                 try:
                     r = launch(job["iid"], node, job["prompt"], job["session"], job["title"],
-                               dict(NO_NOTES_ENV, **lanes.env[lane], OPENCODE_CONFIG=cfg[node["skills"]]), a, steps_dir, procs,
+                               dict(NO_NOTES_ENV, **lanes.env[lane], OPENCODE_CONFIG=conf), a, steps_dir, procs,
                                on_tool=lambda n, iid=job["iid"]: mark(iid, nid, tools=n))
                 finally:
                     lanes.give(lane)
@@ -500,7 +578,9 @@ def run_flow(name, flow, ctx, a):
                             results[r["id"]] = r
                 state["dirty"] = True
             expose(node, [results[j["iid"]] for j in jobs])
-        graph["state"] = "done"
+        graph["state"] = ctx.get("halt_state") or "done"
+        if ctx.get("halt"):
+            graph["reason"] = ctx["halt"]
     except KeyboardInterrupt:
         graph["state"] = "stopped"
         raise
@@ -524,7 +604,12 @@ def describe(name, flow, ctx, a):
     for spec in flow["nodes"]:
         node = full(spec, a)
         if node["kind"] == "code":
-            lines.append(f"  {node['id']}: code {node['fn'].__name__}({', '.join(node['inputs'])})")
+            lines.append(f"  {node['id']}: code {node['fn'].__name__}({', '.join(node['inputs'])})"
+                         + (", always" if node["always"] else "") + (", conditional" if node["when"] else ""))
+            continue
+        if node["kind"] == "command":
+            lines.append(f"  {node['id']}: command {node['cmd'].__name__}, {node['timeout']} s"
+                         + (", conditional" if node["when"] else ""))
             continue
         bits = [node["kind"], f"agent {node['agent']}", f"effort {node['variant']}", f"session {node['session']}"]
         if node["fanout"]:
