@@ -487,3 +487,17 @@ Build: `graph.py` replaces `graph.json` whole at every change: the planned steps
 Checked offline: `ask-check.sh` passes: the planned steps and the end state in `graph.json`, `stopped` for a stopped runner, the session link, hop rows folded (a 7(2) row marked partly gives "hop 2 is partly"), and the template run through a private command file with `<mode>facts</mode>` (flow `facts`, 5 fact questions). In the real window under tmux, with a stand-in that answers in 2 seconds: the panel listed the five steps waiting; then decompose done in 4 s and facts 0/5 with four runs going and their tool calls; facts 4/5; verify 1/2; and at 0:24 done, with "claims: 5 correct, 2 partly" and the run folder. A new session showed no panel. In a scratch project, its own command, tool and skill were used, and the README's example tool returned 5 for a five-line file. `setup-project.sh` made the folders, linked the package, listed `.opencode/` once in the main repository's exclude file when run from a worktree, and git saw nothing new.
 
 Check (owner): reopen the window, run `/custom-graph` with a question and watch the sidebar; optionally, the template through `/facts-graph`.
+
+## Fix: the nightly review could not reach the gateway
+
+Dates: 2026-10-28.
+
+Found: the 03:00 review (Hermes cron job `nightly-review`) failed when it ran at the next start of the model server: "GatewayClientError: Gateway connection failed; no local fallback". Under systemd, Hermes v0.22.5 runs each cron job in a separate worker process (`python -m cron.scheduler --external-worker-file`), and the worker connects to the gateway's own API on 127.0.0.1, at a port the gateway picks at random at every start (`start_gateway_api(port=0)`; no setting fixes it). The hermes chain refused the connection (kernel log: `agent-egress refused: ... DST=127.0.0.1 ... DPT=60029`, the gateway's own port). Every cron run takes this path, not only runs that start late.
+
+Rejected: opening the random port range on 127.0.0.1 to `hermes` (15 of the owner's own programs listen there); clearing `INVOCATION_ID` so cron stays in the gateway process (Hermes uses it for its restart and supervisor logic); matching the gateway's cgroup (`socket cgroupv2` resolves the cgroup when the rules load, so a gateway restart breaks the rule).
+
+Fix: the hermes chain lets a connection to any port of 127.0.0.1 from 1024 up through and marks it (bit 0x100 of the connection mark, counter `self`). The listener's answer (SYN-ACK) leaves as the listener's user, and a new `answer` chain, checked before the hermes chain, drops it unless that user is `hermes`. So `hermes` reaches its own listeners and nobody else's; a dropped answer is logged and counted as refused.
+
+Checked offline (the repository's template in a private network namespace): `hermes` to a `hermes` listener connected; `hermes` to another user's listener timed out (5 answers refused); port 8000 connected in both cases; a port with nothing listening refused at once; a client that is not `hermes` unaffected (all counters 0).
+
+Check (owner): `sudo scripts/shell/enable-shell.sh`; run the review once as `hermes` (`hermes cron run nightly-review`); the review email arrives, the kernel log has no new `DST=127.0.0.1` refusal, and counter `self` is above 0.

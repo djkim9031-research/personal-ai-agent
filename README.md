@@ -178,7 +178,7 @@ Every agent is offered a new tool unless its settings deny it. To give a tool to
 
 ## Part 3: the email assistant (Hermes and Gmail)
 
-You email the agent's own Gmail address from your personal address. Hermes Agent reads that mailbox every 15 seconds while the model server runs, answers with the local model, and replies in the same thread. It runs as its own user, `hermes`, which cannot read your files. The commands the model runs go into a Docker container with no network. A firewall rule lets the `hermes` user connect only to the model server, the local name resolver and the two mail ports (993 and 465), plus the local fetch service once web search is installed. Mail from any other address, or mail that Gmail did not verify as coming from your address, is ignored.
+You email the agent's own Gmail address from your personal address. Hermes Agent reads that mailbox every 15 seconds while the model server runs, answers with the local model, and replies in the same thread. It runs as its own user, `hermes`, which cannot read your files. The commands the model runs go into a Docker container with no network. A firewall rule lets the `hermes` user connect only to the model server, the local name resolver, the two mail ports (993 and 465), the local fetch service once web search is installed, and programs that `hermes` itself runs on this machine (the nightly review connects back to the gateway this way). Mail from any other address, or mail that Gmail did not verify as coming from your address, is ignored.
 
 ### Step 1: a Gmail account for the agent
 

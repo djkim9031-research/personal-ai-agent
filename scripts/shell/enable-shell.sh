@@ -26,7 +26,7 @@ systemctl daemon-reload
 systemctl enable --now agent-egress.service
 systemctl restart agent-egress.service
 systemctl enable agent-hermes.service
-nft list table inet agent_egress | grep -E 'counter (model|web|dns|mail|refused)' -A1 | grep -E 'counter|packets'
+nft list table inet agent_egress | grep -E 'counter (model|web|dns|mail|self|refused)' -A1 | grep -E 'counter|packets'
 if systemctl is-active --quiet agent-vllm.service; then
     systemctl start agent-hermes.service
     echo "agent-vllm is running, so the gateway was started"

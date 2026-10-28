@@ -2,13 +2,20 @@
 # Template for /etc/agent-egress.nft, rendered by scripts/shell/enable-shell.sh,
 # which fills in @UID@ (the hermes user). Connections that user may open: the
 # model server, the local web service (search results only, increment 10) and
-# the local resolver on loopback, and the two mail ports.
+# the local resolver on loopback, the two mail ports, and its own programs
+# listening on 127.0.0.1 (Hermes' cron worker connects back to the gateway, on
+# a port the gateway picks at random at every start).
 # Everything else from it is counted, logged (10 a minute at most) and refused.
 # Only packets from sockets that a program of that user opened enter the hermes
 # chain. The kernel's own packets (network-drive mounts, resets, ICMP errors,
 # closing connections) have no such socket, so no skuid rule matches them:
 # with "skuid != uid accept" they fell through to the refusal. Never enable
 # nftables.service on this machine: it would flush the ruleset, including ufw's.
+# Own programs: the hermes chain lets a connection to any port of 127.0.0.1
+# through and marks it (bit 0x100 of the connection mark). The kernel sends the
+# listener's answer to it (SYN-ACK) as the listener's user, so the answer chain
+# drops it unless that user is hermes, and the connection never opens: your
+# own local servers stay closed to hermes.
 table inet agent_egress
 delete table inet agent_egress
 
@@ -17,11 +24,19 @@ table inet agent_egress {
     counter web {}
     counter dns {}
     counter mail {}
+    counter self {}
     counter refused {}
 
     chain output {
         type filter hook output priority 0; policy accept;
+        oif "lo" ct mark and 0x00000100 == 0x00000100 tcp flags & (syn | ack) == syn | ack jump answer
         meta skuid @UID@ jump hermes
+    }
+
+    chain answer {
+        meta skuid @UID@ accept
+        limit rate 10/minute log prefix "agent-egress refused: " level info
+        counter name refused drop
     }
 
     chain hermes {
@@ -30,6 +45,7 @@ table inet agent_egress {
         oif "lo" ip daddr 127.0.0.1 tcp dport 8889 counter name web accept
         oif "lo" ip daddr 127.0.0.53 meta l4proto { tcp, udp } th dport 53 counter name dns accept
         oif != "lo" tcp dport { 465, 993 } counter name mail accept
+        oif "lo" ip daddr 127.0.0.1 tcp dport 1024-65535 ct mark set ct mark or 0x00000100 counter name self accept
         limit rate 10/minute log prefix "agent-egress refused: " level info
         counter name refused reject
     }
