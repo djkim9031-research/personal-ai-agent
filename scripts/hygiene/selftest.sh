@@ -19,6 +19,13 @@ token="ghp_$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 36)"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git init -q --bare "$tmp/remote.git"
+# Stands in for the credential helper: only pushes started with AGENT_REPO_PUSH=1 get in, so a
+# program that pushes by itself (notes, with hooks turned off) is kept out here as on GitHub.
+printf '#!/bin/sh\n[ "${AGENT_REPO_PUSH:-}" = 1 ] || { echo "no token for this push" >&2; exit 1; }\n' \
+    > "$tmp/remote.git/hooks/pre-receive"
+chmod +x "$tmp/remote.git/hooks/pre-receive"
+git -C "$tmp/remote.git" config core.hooksPath "$tmp/remote.git/hooks"   # a global hooksPath would hide it
+export AGENT_REPO_PUSH=1
 git clone -q "$src" "$tmp/work"
 cd "$tmp/work"
 git for-each-ref --format='%(refname)' refs/remotes | xargs -r -n1 git update-ref -d
@@ -58,7 +65,12 @@ commit_other_email() {
     add_file w.txt w && git -c user.email="$other_email" commit -q --no-verify -m "Add w" && git push -q origin HEAD:main
 }
 push_notes() { git notes add -m note HEAD && git push -q origin refs/notes/commits; }
+delete_notes() {
+    git notes add -m note HEAD && git -c core.hooksPath=/dev/null push -q origin refs/notes/commits \
+        && git push -q origin :refs/notes/commits
+}
 commit_push_clean() { commit_file clean.txt hello "Add clean file" && git push -q origin HEAD:main; }
+push_unmarked() { commit_file u.txt u "Add u" && env -u AGENT_REPO_PUSH git push -q origin HEAD:main; }
 
 row "Attempt" "Expected" "Result"
 if out=$(git push -q -u origin HEAD:main 2>&1); then
@@ -80,6 +92,8 @@ expect "other email, committed with --no-verify" "wrong identity" commit_other_e
 expect "sample 1 in a message, with --no-verify" "deny-list match" commit_skip_push y.txt y "$(printf 'Add y\n\n%s' "${samples[0]}")"
 expect "fake token in a file, with --no-verify" "gitleaks" commit_skip_push config.txt "token = $token" "Add config"
 expect "push of a notes record" "notes ref" push_notes
+expect "deleting a notes record pushed without hooks" accepted delete_notes
+expect "push started without AGENT_REPO_PUSH" "no token" push_unmarked
 expect "clean commit and push" accepted commit_push_clean
 refs=$(git ls-remote "$tmp/remote.git" | awk '{print $2}' | paste -sd' ')
 if [ "$refs" = "HEAD refs/heads/main" ]; then ok "refs on the stand-in remote" "HEAD and main only"

@@ -501,3 +501,13 @@ Fix: the hermes chain lets a connection to any port of 127.0.0.1 from 1024 up th
 Checked offline (the repository's template in a private network namespace): `hermes` to a `hermes` listener connected; `hermes` to another user's listener timed out (5 answers refused); port 8000 connected in both cases; a port with nothing listening refused at once; a client that is not `hermes` unaffected (all counters 0).
 
 Check (owner): `sudo scripts/shell/enable-shell.sh`; run the review once as `hermes` (`hermes cron run nightly-review`); the review email arrives, the kernel log has no new `DST=127.0.0.1` refusal, and counter `self` is above 0.
+
+## Fix: a notes ref reached the remote
+
+Dates: 2026-10-28.
+
+Found: after the push of the firewall fix, `audit.sh` stopped on `unexpected refs on origin: refs/notes/ai`. A notes-syncing tool on this machine (it hears every git command through the global trace2 setting) had written a note for the new commit and pushed `refs/notes/ai` itself, with hooks turned off, so `pre-push` never ran. The note held only the tool's name and version and an empty prompt list. It had started on this repository the night before; the earlier 44 commits carry no note.
+
+Fix: `setup-repo.sh` now writes a credential helper that hands out the token only when `AGENT_REPO_PUSH=1` is set; the new `scripts/hygiene/push.sh` sets it, pushes main, deletes any notes ref on the remote and runs `audit.sh`. A push that another program starts gets no token and fails. `pre-push` lets a push delete a notes ref from the remote (adding one is still refused), and `selftest.sh` checks that. The tool itself and its local records are left as they are.
+
+Checked: the helper in a throwaway clone gave no username without the variable ("terminal prompts disabled") and a username and token with it; the remote ref was deleted with the new hook, and the remote showed only `main` afterwards. `selftest.sh` found the same tool pushing its notes ref to the test's local stand-in remote, which needs no token; the stand-in now admits only pushes with `AGENT_REPO_PUSH=1` (a pre-receive hook, with the stand-in's own hooks folder, since a global `core.hooksPath` hides it), and the test passes 18 of 18, a push without the variable refused.

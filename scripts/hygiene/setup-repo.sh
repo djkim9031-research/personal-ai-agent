@@ -23,14 +23,17 @@ git config --local core.hooksPath .githooks
 git config --local commit.template .gitmessage
 
 # GitHub over HTTPS gets this account's token from gh and nothing else: the
-# empty value drops every helper set in the global and system config.
+# empty value drops every helper set in the global and system config. Only a
+# push started with AGENT_REPO_PUSH=1 (push.sh) gets the token, so a program
+# that pushes on its own, such as a tool that copies refs/notes/* to the
+# remote with hooks turned off, cannot log in.
 if [ -n "$gh_user" ]; then
     gh=$(command -v gh) || { echo "gh not found" >&2; exit 1; }
     key=credential.https://github.com.helper
     git config --local --unset-all "$key" || true
     git config --local --add "$key" ''
     git config --local --add "$key" \
-        "!f() { test \"\$1\" = get || exit 0; echo username=$gh_user; echo \"password=\$($gh auth token --user $gh_user)\"; }; f"
+        "!f() { test \"\$1\" = get || exit 0; test \"\${AGENT_REPO_PUSH:-}\" = 1 || exit 0; echo username=$gh_user; echo \"password=\$($gh auth token --user $gh_user)\"; }; f"
 fi
 
 excludes=${HYGIENE_EXCLUDES_FILE:-$HOME/agent-data/secrets/repo-local-excludes.txt}

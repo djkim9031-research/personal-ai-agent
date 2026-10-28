@@ -355,6 +355,7 @@ Only needed if you commit to this repository:
 2. Create a deny-list file at the path in `.githooks/lib.sh`, in the format described there.
 3. `scripts/hygiene/setup-repo.sh --name NAME --email EMAIL --gh-user LOGIN`
 4. `scripts/hygiene/selftest.sh`
+5. Push with `scripts/hygiene/push.sh`. The GitHub token goes only to pushes started this way, so a program that pushes by itself with the hooks turned off (for example a tool that copies `refs/notes/*` to every remote) cannot log in. The script then deletes any notes ref it finds on the remote and checks the remote with `audit.sh`.
 
 ## License
 
